@@ -1,0 +1,119 @@
+"""Tests du moteur d'importation de decklists (multi-formats -> natif OPTCGSim)."""
+
+import pytest
+
+from studio.decks.importer import Decklist, ImportError_, parse_html, parse_text
+
+# Copie d'une decklist RÉELLE du sim (0Sanji P6K.txt) : 1 leader + 50 cartes.
+NATIVE = """1xPRB01-001
+4xST30-004
+4xOP10-005
+3xOP15-012
+4xOP12-008
+4xPRB02-001
+4xOP06-012
+4xOP12-002
+4xOP15-003
+4xST30-005
+4xOP08-014
+4xEB04-004
+3xEB04-007
+2xOP09-118
+2xOP14-018
+"""
+
+
+def test_native_roundtrip_exact():
+    deck = parse_text(NATIVE)
+    assert deck.leader == "PRB01-001"
+    assert deck.total == 50
+    assert deck.cards["ST30-004"] == 4 and deck.cards["OP14-018"] == 2
+    # round-trip : re-sérialisé, re-parsé, identique
+    again = parse_text(deck.to_native_text())
+    assert again.leader == deck.leader and again.cards == deck.cards
+
+
+@pytest.mark.parametrize("line,cid,qty", [
+    ("4x OP01-001", "OP01-001", 4),
+    ("4 x OP01-001", "OP01-001", 4),
+    ("4 OP01-001", "OP01-001", 4),
+    ("OP01-001 x4", "OP01-001", 4),
+    ("OP01-001 ×4", "OP01-001", 4),
+    ("4x OP01-001 Monkey D. Luffy", "OP01-001", 4),
+    ("4 Monkey D. Luffy (OP01-001)", "OP01-001", 4),
+    ("- 4x OP01-001", "OP01-001", 4),
+    ("4xP-001", "P-001", 4),                      # ids promo
+])
+def test_community_line_formats(line, cid, qty):
+    body = "\n".join(f"4xZZ{i:02d}-001" for i in range(11))   # 44 cartes
+    text = f"1xOP01-060\n{line}\n{body}\n2xYY01-001"          # 4 + 44 + 2 = 50
+    deck = parse_text(text)
+    assert deck.cards[cid] == qty
+
+
+def test_leader_section_format():
+    text = ("Leader:\nOP01-060\n\nDeck:\n"
+            + "\n".join(f"4x AA{i:02d}-001" for i in range(12)) + "\n2x BB01-001")
+    deck = parse_text(text)
+    assert deck.leader == "OP01-060"
+    assert deck.total == 50
+
+
+def test_wrong_size_rejected():
+    with pytest.raises(ImportError_, match="49 cartes"):
+        parse_text("1xOP01-060\n" + "\n".join(f"4xAA{i:02d}-001" for i in range(12)) + "\n1xBB01-001")
+
+
+def test_more_than_four_copies_rejected():
+    text = ("1xOP01-060\n5xAA01-001\n" + "\n".join(f"4xBB{i:02d}-001" for i in range(11)) + "\n1xCC01-001")
+    with pytest.raises(ImportError_, match="max 4"):
+        parse_text(text)
+
+
+def test_no_leader_determinable():
+    with pytest.raises(ImportError_, match="Leader indéterminable"):
+        parse_text("\n".join(f"4xAA{i:02d}-001" for i in range(12)) + "\n2xB01-001")
+
+
+def test_empty_text_rejected():
+    with pytest.raises(ImportError_, match="Aucune entrée"):
+        parse_text("bonjour\npas une decklist\n")
+
+
+def test_comments_and_noise_ignored():
+    deck = parse_text("# mon deck\n// commentaire\n" + NATIVE)
+    assert deck.total == 50
+
+
+# ------------------------------------------------------------------ HTML générique
+def test_html_with_embedded_native_export():
+    html = f"<html><body><textarea>{NATIVE}</textarea></body></html>"
+    deck = parse_html(html)
+    assert deck.leader == "PRB01-001" and deck.total == 50
+
+
+def test_html_generic_pairs_with_dom_noise():
+    rows = "".join(
+        f'<div class="row"><span class="qty">{q}x</span><span class="id">{cid}</span></div>'
+        for cid, q in [("OP01-060", 1)] + [(f"AA{i:02d}-001", 4) for i in range(12)]
+        + [("BB01-001", 2)])
+    deck = parse_html(f"<html>{rows}</html>")
+    assert deck.leader == "OP01-060"
+    assert deck.total == 50
+
+
+def test_html_without_decklist_fails_with_advice():
+    with pytest.raises(ImportError_, match="Export OPTCGSim"):
+        parse_html("<html><p>Article sur le meta OP17</p></html>")
+
+
+# ------------------------------------------------------------------ écriture vers le sim
+def test_save_to_sim_idempotent_but_no_clobber(tmp_path):
+    deck = parse_text(NATIVE)
+    p = deck.save_to_sim("Import Test", tmp_path)
+    assert p.read_text() == deck.to_native_text()
+    deck.save_to_sim("Import Test", tmp_path)          # même contenu : idempotent
+    other = Decklist(leader="OP01-060",
+                     cards={f"AA{i:02d}-001": 4 for i in range(12)} | {"BB01-001": 2})
+    with pytest.raises(ImportError_, match="existe déjà"):
+        other.save_to_sim("Import Test", tmp_path)     # contenu différent : refus
