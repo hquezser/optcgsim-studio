@@ -60,10 +60,20 @@ standard, `verified=False` tant que non confirmés sur machine réelle.
 
 ```bash
 studio assets inventory                 # ce que TON installation expose (61 sets…)
+studio assets apply-mirror ~/Theme --dry-run   # thème calqué sur StreamingAssets (Themer & co)
+studio assets apply-mirror ~/Theme      # applique après prévisualisation
 studio assets apply-pack ~/MonPack      # layout : cards/, playmats/, cardback.png, translation.txt
 studio assets status                    # active / overwritten (màj sim) / original
 studio assets restore-all
 ```
+
+**`apply-mirror`** absorbe les thèmes distribués comme un miroir de `StreamingAssets` (le
+modèle du site [optcgsimthemer.com](https://www.optcgsimthemer.com) : Playmats, Menus,
+CardBacks, Don, Cards). Règle unique et sûre : un fichier du thème n'est appliqué que si le
+**même chemin relatif existe déjà** dans le jeu et partage son format — jamais de création
+de fichier inconnu. Couvre d'office les catégories qu'`apply-pack` ne gérait pas
+(`Cards/Don/Don.png`, fonds). Les `.txt` sont renvoyés vers la fusion de traduction.
+`--dry-run` prévisualise (rien écrit) ; `restore-all` annule tout.
 
 ## Pilier 2 — Import universel de decklists (`studio decks …`)
 

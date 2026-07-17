@@ -35,6 +35,26 @@ def cmd_assets_apply_pack(args) -> int:
     return 0
 
 
+def cmd_assets_apply_mirror(args) -> int:
+    mgr = AssetManager(_install(args))
+    rep = mgr.apply_mirror(Path(args.pack), dry_run=args.dry_run)
+    verb = "seraient remplacés" if args.dry_run else "remplacés"
+    print(f"Racine détectée : {rep['root']}")
+    print(f"{len(rep['applied'])} fichiers {verb}.")
+    if rep["skipped_txt"]:
+        print(f"  {len(rep['skipped_txt'])} traduction(s) ignorée(s) du miroir — "
+              f"utiliser `studio assets` (fusion) : {rep['skipped_txt']}")
+    if rep["ignored"]:
+        print(f"  {len(rep['ignored'])} ignoré(s) (pas de cible / format / non-image) :")
+        for i in rep["ignored"][:10]:
+            print(f"    - {i['path']} : {i['reason']}")
+        if len(rep["ignored"]) > 10:
+            print(f"    … et {len(rep['ignored']) - 10} de plus")
+    if not args.dry_run and rep["applied"]:
+        print("Ferme le sim avant/pendant. `studio assets restore-all` annule tout.")
+    return 0
+
+
 def cmd_assets_status(args) -> int:
     rows = AssetManager(_install(args)).status()
     if not rows:
@@ -119,6 +139,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap = sa.add_parser("apply-pack")
     ap.add_argument("pack", help="dossier du pack (layout drag&drop)")
     ap.set_defaults(func=cmd_assets_apply_pack)
+    am = sa.add_parser("apply-mirror",
+                       help="pack calqué sur StreamingAssets (Themer & assimilés)")
+    am.add_argument("pack", help="dossier/zip décompressé du thème")
+    am.add_argument("--dry-run", action="store_true", help="analyser sans rien écrire")
+    am.set_defaults(func=cmd_assets_apply_mirror)
     sa.add_parser("status").set_defaults(func=cmd_assets_status)
     sa.add_parser("restore-all").set_defaults(func=cmd_assets_restore_all)
 

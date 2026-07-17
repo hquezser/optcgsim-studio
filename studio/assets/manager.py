@@ -258,6 +258,92 @@ class AssetManager:
             print(f"⚠ {len(unknown)} clés inconnues ignorées (ex. {sorted(unknown)[:3]})")
         return target
 
+    # ------------------------------------------------------------ miroir StreamingAssets (P0)
+    # Racines connues d'un pack « miroir » (layout du site Themer & co) : les noms de premier
+    # niveau qui, présents, signent un pack calqué sur StreamingAssets.
+    _MIRROR_ROOTS = ("Cards", "Playmats", "CardBacks", "OPBounty")
+    _MIRROR_FILES = ("background.jpg", "deckeditbackground.jpg")
+
+    def _find_mirror_root(self, pack_dir: Path) -> Path:
+        """Trouve la racine réelle du miroir : le dossier qui contient les entrées
+        StreamingAssets connues, même s'il est enveloppé dans 1-2 dossiers (cas d'un zip
+        décompressé avec un dossier englobant). Renvoie `pack_dir` si rien de plus profond."""
+        def looks_like_mirror(d: Path) -> bool:
+            names = {p.name for p in d.iterdir()} if d.is_dir() else set()
+            return bool(set(self._MIRROR_ROOTS) & names) or bool(
+                set(self._MIRROR_FILES) & names)
+
+        if looks_like_mirror(pack_dir):
+            return pack_dir
+        # descente prudente : un seul niveau d'emballage, sinon on abandonne (pack_dir tel quel)
+        subdirs = [p for p in pack_dir.iterdir() if p.is_dir()] if pack_dir.is_dir() else []
+        for d in subdirs:
+            if looks_like_mirror(d):
+                return d
+        return pack_dir
+
+    def apply_mirror(self, pack_dir: Path, origin: str | None = None,
+                     dry_run: bool = False) -> dict:
+        """Applique un pack calqué sur StreamingAssets (modèle du site Themer & assimilés).
+
+        Règle unique : pour chaque image du pack, si le MÊME chemin relatif existe déjà dans
+        StreamingAssets et partage le même format, on le remplace (via `_swap` : backup +
+        atomique + manifeste). Sinon on IGNORE en le rapportant — JAMAIS de création de
+        fichier inconnu du jeu. Un pack ne peut donc que re-skinner de l'existant, et
+        `restore_all()` défait tout.
+
+        `dry_run=True` : analyse seulement — rien n'est écrit, `applied` liste ce qui LE
+        SERAIT (idéal pour prévisualiser avant d'appliquer).
+
+        Les .txt (traduction) sont volontairement EXCLUS : ils doivent passer par
+        `apply_translation` (fusion préservant les clés officielles), pas par un écrasement.
+
+        Renvoie un rapport {root, applied: [rel], ignored: [{path, reason}], skipped_txt}.
+        """
+        pack_dir = Path(pack_dir)
+        root = self._find_mirror_root(pack_dir)
+        origin = origin or f"mirror:{pack_dir.name}"
+        sa = self.install.streaming_assets.resolve()
+        report: dict = {"root": str(root), "applied": [], "ignored": [], "skipped_txt": []}
+
+        for src in sorted(p for p in root.rglob("*") if p.is_file()):
+            if src.is_symlink():
+                report["ignored"].append({"path": src.name, "reason": "symlink refusé"})
+                continue
+            rel = src.relative_to(root)
+            ext = src.suffix.lower()
+            if ext == ".txt":
+                report["skipped_txt"].append(str(rel))
+                continue
+            if ext not in (".png", ".jpg", ".jpeg"):
+                report["ignored"].append({"path": str(rel), "reason": "type non cosmétique"})
+                continue
+            target = (sa / rel)
+            if not target.exists():
+                report["ignored"].append(
+                    {"path": str(rel), "reason": "aucune cible correspondante dans le jeu"})
+                continue
+            # format : le miroir doit respecter le format de la cible existante
+            t_fmt = "png" if target.suffix.lower() == ".png" else "jpeg"
+            try:
+                s_fmt, _, _ = image_info(src)
+            except AssetError as e:
+                report["ignored"].append({"path": str(rel), "reason": str(e)})
+                continue
+            if s_fmt != t_fmt:
+                report["ignored"].append(
+                    {"path": str(rel), "reason": f"format {s_fmt} ≠ cible {t_fmt}"})
+                continue
+            if dry_run:
+                report["applied"].append(str(rel))         # ce qui SERAIT remplacé
+                continue
+            try:
+                self._swap(target, src, origin)
+                report["applied"].append(str(rel))
+            except AssetError as e:
+                report["ignored"].append({"path": str(rel), "reason": str(e)})
+        return report
+
     def apply_pack(self, pack_dir: Path) -> dict[str, int]:
         """Applique un pack d'assets (structure = celle que le frontend produit en D&D) :
 
