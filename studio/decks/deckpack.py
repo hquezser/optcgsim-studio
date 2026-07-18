@@ -36,6 +36,12 @@ class DeckPackError(Exception):
     pass
 
 
+# Version du format deckpack.json comprise par ce studio. Un pack peut déclarer
+# `"schema_version": N` ; on résout au mieux et on AVERTIT si N est plus récent
+# (compat ascendante : on n'échoue pas sur un pack publié par une version future).
+SCHEMA_VERSION = 1
+
+
 @dataclass
 class ResolvedDeck:
     name: str
@@ -49,11 +55,14 @@ class DeckPackReport:
     author: str | None = None
     imported: list[ResolvedDeck] = field(default_factory=list)
     failed: list[dict] = field(default_factory=list)      # {name, reason}
+    warnings: list[str] = field(default_factory=list)     # non bloquant (version, méta)
 
     def summary(self) -> str:
         s = f"« {self.name} » : {len(self.imported)} deck(s) importé(s)"
         if self.failed:
             s += f", {len(self.failed)} en échec"
+        if self.warnings:
+            s += f", {len(self.warnings)} avertissement(s)"
         return s
 
 
@@ -81,6 +90,11 @@ def resolve(manifest: dict, pack_dir: Path,
         raise DeckPackError("Manifeste sans liste `decks` non vide.")
     rep = DeckPackReport(name=manifest.get("name") or "Deck pack",
                          author=manifest.get("author"))
+    ver = manifest.get("schema_version", 1)
+    if isinstance(ver, int) and ver > SCHEMA_VERSION:
+        rep.warnings.append(
+            f"pack au format v{ver}, ce studio comprend v{SCHEMA_VERSION} — "
+            "résolution au mieux, mets à jour le studio pour le support complet.")
     seen_names: set[str] = set()
     for i, entry in enumerate(entries):
         name = (entry.get("name") if isinstance(entry, dict) else None) or f"deck {i + 1}"

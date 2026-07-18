@@ -102,6 +102,24 @@ def test_import_deckpack_from_folder(svc, tmp_path):
     assert "Aggro" in {d["name"] for d in svc.decks()}
 
 
+def test_validate_deckpack_is_dry_run(svc, tmp_path):
+    import json
+    src = tmp_path / "pack"
+    src.mkdir()
+    (src / "deckpack.json").write_text(json.dumps({
+        "name": "Contrôle", "schema_version": 999, "decks": [
+            {"name": "Ok", "text": _DECK50},
+            {"name": "Cassé", "text": "1xOP01-060"},   # invalide
+        ]}))
+    r = svc.validate_deckpack(str(src))
+    assert r["valid"] is False
+    assert [d["name"] for d in r["imported"]] == ["Ok"]
+    assert r["failed"][0]["name"] == "Cassé"
+    assert r["warnings"]                                   # version future signalée
+    # dry-run : RIEN persisté
+    assert "Ok" not in {d["name"] for d in svc.decks()}
+
+
 def test_http_deckpack_is_job_based(server, svc, tmp_path):
     import json
     src = tmp_path / "dp"

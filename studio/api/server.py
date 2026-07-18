@@ -321,7 +321,17 @@ class StudioService:
         return {"name": rep.name, "author": rep.author,
                 "imported": [{"name": d.name, "leader": d.deck.leader,
                               "total": d.deck.total, "tags": d.tags} for d in rep.imported],
-                "failed": rep.failed}
+                "failed": rep.failed, "warnings": rep.warnings}
+
+    def validate_deckpack(self, source: str) -> dict:
+        """Contrôle à blanc (dry-run) : résout tous les decks SANS rien persister.
+        Renvoie ce qui serait importé, les échecs et les avertissements de version."""
+        from ..decks import deckpack
+        rep = deckpack.from_source(source, packlib.ingest, self.lib_dir / ".deckwork")
+        return {"name": rep.name, "author": rep.author, "valid": not rep.failed,
+                "imported": [{"name": d.name, "leader": d.deck.leader,
+                              "total": d.deck.total, "tags": d.tags} for d in rep.imported],
+                "failed": rep.failed, "warnings": rep.warnings}
 
     def start_deckpack_job(self, source: str) -> str:
         return self.jobs.start("deckpack", lambda reporter: self.import_deckpack(source, reporter))
@@ -419,6 +429,9 @@ def make_handler(svc: StudioService):
                     return self._send(200, svc.import_deck(
                         text=b.get("text"), url=b.get("url"),
                         name=b.get("name"), tags=b.get("tags")))
+                if path == "/api/deckpacks/validate":
+                    b = self._body_json()
+                    return self._send(200, svc.validate_deckpack(b["source"]))
                 if path == "/api/deckpacks/add":
                     b = self._body_json()
                     return self._send(202, {"job_id": svc.start_deckpack_job(b["source"])})

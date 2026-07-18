@@ -420,7 +420,24 @@ def cmd_decks_import_pack(args) -> int:
               + (f" [{', '.join(d.tags)}]" if d.tags else ""))
     for f in rep.failed:
         print(f"  ✗ {f['name']} : {f['reason']}")
+    for w in rep.warnings:
+        print(f"  ⚠ {w}")
     return 0
+
+
+def cmd_decks_validate_pack(args) -> int:
+    """Contrôle à blanc d'un deckpack (dry-run) : résout tout, n'écrit rien."""
+    from .decks import deckpack
+    rep = deckpack.from_source(args.source, packlib.ingest, _PACK_LIB / ".deckwork")
+    print(rep.summary() + "  (contrôle à blanc — rien écrit)")
+    for d in rep.imported:
+        print(f"  ✓ {d.name} ({d.deck.leader}, {d.deck.total} cartes)"
+              + (f" [{', '.join(d.tags)}]" if d.tags else ""))
+    for f in rep.failed:
+        print(f"  ✗ {f['name']} : {f['reason']}")
+    for w in rep.warnings:
+        print(f"  ⚠ {w}")
+    return 1 if rep.failed else 0
 
 
 # --------------------------------------------------------------------------- sync
@@ -518,6 +535,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="importer une collection de decks (deckpack.json : dossier/zip/URL)")
     dip.add_argument("source", help="dossier, .zip ou URL contenant un deckpack.json")
     dip.set_defaults(func=cmd_decks_import_pack)
+
+    dvp = sd.add_parser("validate-pack",
+                        help="contrôler un deckpack sans l'importer (dry-run)")
+    dvp.add_argument("source", help="dossier, .zip ou URL contenant un deckpack.json")
+    dvp.set_defaults(func=cmd_decks_validate_pack)
 
     pui = sub.add_parser("ui", help="lance l'interface web locale (zéro dépendance)")
     pui.add_argument("--port", type=int, default=8770)

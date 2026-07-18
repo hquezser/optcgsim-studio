@@ -85,6 +85,21 @@ def test_find_manifest_absent_raises(tmp_path):
         deckpack.find_manifest(tmp_path)
 
 
+def test_schema_version_future_warns_not_fails(tmp_path):
+    manifest = {"name": "P", "schema_version": deckpack.SCHEMA_VERSION + 1,
+                "decks": [{"name": "S", "text": VALID}]}
+    rep = deckpack.resolve(manifest, tmp_path)
+    assert len(rep.imported) == 1                 # résolu quand même
+    assert rep.warnings and "format v" in rep.warnings[0]
+
+
+def test_current_schema_version_no_warning(tmp_path):
+    manifest = {"name": "P", "schema_version": deckpack.SCHEMA_VERSION,
+                "decks": [{"name": "S", "text": VALID}]}
+    rep = deckpack.resolve(manifest, tmp_path)
+    assert rep.warnings == []
+
+
 def test_from_source_ingests_and_cleans(tmp_path):
     # ingest factice : renvoie un dossier contenant un deckpack.json
     content = tmp_path / "content"
