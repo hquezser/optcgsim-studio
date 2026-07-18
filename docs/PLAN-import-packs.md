@@ -357,9 +357,10 @@ Décisions ouvertes historiques (résolues) :
 - P7 : fetch sélectif avant DL pour GitHub (98 % d'économie mesurée), filtre disque sinon.
 
 Décisions ouvertes pour P8-P9 (à trancher avant d'implémenter) :
-- P8 : dépôt unique (simple) vs plusieurs dépôts par type de contenu (scalable > ~1 Go) —
-  dépend du volume que l'utilisateur compte héberger. Reco : mono-dépôt, scinder si > 1 Go.
-- P9 : où publier la spec (README public + dépôt d'exemple) ; pas de registre central géré
-  par le studio (cohérent avec l'abandon de P5).
+- P8 : TRANCHÉ (2026-07-19) -> PLUSIEURS dépôts par type de contenu dès le départ (les
+  images sont toujours volumineuses ; on évite d'atteindre les limites GitHub). Convention à
+  documenter : un dépôt par famille (alt-arts, traductions, playmats+cardbacks+dons).
+- P9 : TRANCHÉ (2026-07-19) -> repo DÉDIÉ (optcgsim-deckpacks) portant spec + schema +
+  exemple + README de contribution. Pas de registre central géré par le studio.
 - Ordre suggéré : P8 (débloque l'import par type, extension directe de P7) puis P9 (doc +
   petite commande de validation).
