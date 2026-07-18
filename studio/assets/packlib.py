@@ -74,16 +74,74 @@ class PackReport:
     translation: bool = False
     unclassified: list[dict] = field(default_factory=list)   # {path, reason}
     variants: list[dict] = field(default_factory=list)       # {target, kept, dropped}
+    filtered: list[str] = field(default_factory=list)   # exclus par choix (only_cards/categories)
     present_in_install: int = 0                        # combien de cibles existent déjà
     total_files: int = 0
     files: dict = field(default_factory=dict)          # rel -> sha1 (delta d'update)
 
     def summary(self) -> str:
-        return (f"{len(self.cards)} cartes, {len(self.playmats)} playmats, "
+        base = (f"{len(self.cards)} cartes, {len(self.playmats)} playmats, "
                 f"{len(self.cardbacks)} dos, {len(self.backgrounds)} fonds, "
                 f"traduction={'oui' if self.translation else 'non'} ; "
                 f"{self.present_in_install} cibles présentes dans le jeu ; "
                 f"{len(self.unclassified)} non classés")
+        if self.filtered:
+            base += f" ; {len(self.filtered)} hors périmètre (filtrés)"
+        return base
+
+
+# --------------------------------------------------------------------------- filtre sélectif
+def _card_id_from_stem(stem: str) -> str | None:
+    """Id de carte depuis un nom de fichier (sans ext), suffixes parasites/`_small` retirés."""
+    core = stem[:-6] if stem.endswith("_small") else stem
+    core = _strip_parasite(core)
+    m = _CARD_STEM.match(core)
+    return m.group(1) if m else None
+
+
+def classify_rel(rel: str) -> tuple[str, str | None]:
+    """Catégorie + id de carte d'un chemin SOURCE, par nom (sans lire le fichier).
+
+    Utilisé identiquement pour filtrer AVANT téléchargement (chemins distants GitHub) et à la
+    normalisation (fichiers locaux). Catégories : cards / playmats / cardbacks / backgrounds
+    / translation / other. `card_id` non-None uniquement pour les cartes.
+    """
+    parts = rel.replace("\\", "/").split("/")
+    name = parts[-1]
+    dot = name.rfind(".")
+    stem, ext = (name[:dot], name[dot:].lower()) if dot >= 0 else (name, "")
+    if ext == ".txt":
+        return ("translation", None)
+    if ext not in IMAGE_EXT:
+        return ("other", None)
+    for p in parts[:-1]:
+        if p in MIRROR_ROOTS:
+            if p == "Cards":
+                return ("cards", _card_id_from_stem(stem))
+            return ({"Playmats": "playmats", "CardBacks": "cardbacks",
+                     "OPBounty": "other"}[p], None)
+    if name in ("background.jpg", "deckeditbackground.jpg"):
+        return ("backgrounds", None)
+    cid = _card_id_from_stem(stem)
+    if cid:
+        return ("cards", cid)
+    low = _strip_parasite(stem).lower()
+    if "cardback" in low:
+        return ("cardbacks", None)
+    if "background" in low or "deckedit" in low:
+        return ("backgrounds", None)
+    return ("other", None)
+
+
+def keep_rel(rel: str, only_categories: set[str] | None,
+             only_cards: set[str] | None) -> bool:
+    """Le fichier passe-t-il le filtre sélectif ? (les deux filtres composent en ET)."""
+    cat, cid = classify_rel(rel)
+    if only_categories is not None and cat not in only_categories:
+        return False
+    if only_cards is not None and cat == "cards" and (cid is None or cid not in only_cards):
+        return False
+    return True
 
 
 # --------------------------------------------------------------------------- ingestion
@@ -248,10 +306,16 @@ def _special_target(path: Path, install: GameInstall) -> Path | None:
 # --------------------------------------------------------------------------- normalisation
 def normalize(src_dir: Path, install: GameInstall, name: str,
               source: str, lib_dir: Path = DEFAULT_LIB,
-              on_progress: OnProgress = _noop_progress) -> tuple[Path, PackReport]:
+              on_progress: OnProgress = _noop_progress,
+              only_categories: set[str] | None = None,
+              only_cards: set[str] | None = None) -> tuple[Path, PackReport]:
     """Écrit un pack canonique (miroir) dans `lib_dir/<name>/` et renvoie (chemin, rapport).
 
     Ne touche jamais au jeu. Idempotent : réécrit proprement le dossier du pack.
+
+    `only_categories`/`only_cards` : import SÉLECTIF (P7) — un fichier hors périmètre n'est
+    PAS copié dans la bibliothèque (économie disque réelle) et ressort dans `rep.filtered`,
+    distinct de `unclassified` (un exclu volontaire n'est pas une erreur de reconnaissance).
     """
     src_dir = Path(src_dir)
     pack_dir = Path(lib_dir) / name
@@ -278,6 +342,12 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
         on_progress("classify", i, len(all_files))
         if f.is_symlink():
             rep.unclassified.append({"path": f.name, "reason": "symlink refusé"})
+            continue
+        rel_str = str(f.relative_to(src_dir))
+        # filtre sélectif (P7) : exclu par CHOIX -> rapporté à part, jamais copié.
+        if (only_categories is not None or only_cards is not None) \
+                and not keep_rel(rel_str, only_categories, only_cards):
+            rep.filtered.append(rel_str)
             continue
         ext = f.suffix.lower()
         # 0. traduction
@@ -350,30 +420,61 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
         "cardbacks": sorted(rep.cardbacks), "backgrounds": sorted(rep.backgrounds),
         "translation": rep.translation, "present_in_install": rep.present_in_install,
         "unclassified": rep.unclassified, "variants": rep.variants,
-        "files": files,
+        "filtered": len(rep.filtered), "files": files,
     }, indent=1, ensure_ascii=False))
     return pack_dir, rep
 
 
 def add_pack(source: str | Path, install: GameInstall, name: str | None = None,
              lib_dir: Path = DEFAULT_LIB, work_dir: Path | None = None,
-             on_progress: OnProgress = _noop_progress) -> tuple[Path, PackReport]:
+             on_progress: OnProgress = _noop_progress,
+             only_categories: set[str] | None = None,
+             only_cards: set[str] | None = None,
+             token: str | None = None) -> tuple[Path, PackReport]:
     """Bout-en-bout : ingère une source puis la normalise en pack de bibliothèque.
 
     `on_progress(phase, done, total)` reçoit les phases "download" (réseau), "extract"
     (zip), "classify" et "copy" (normalisation) — permet à l'appelant d'afficher une
     progression sur des opérations qui peuvent durer plusieurs minutes (dossiers
     communautaires de plusieurs centaines de Mo).
+
+    Import SÉLECTIF (P7) : si `only_categories`/`only_cards` est fourni ET que la source
+    supporte l'exploration distante (GitHub, cf. sourcefetch) → on ne TÉLÉCHARGE que les
+    fichiers retenus (économie disque ET bande passante, 98 % mesuré). Sinon (Dropbox, zip,
+    dossier local) → téléchargement complet puis filtrage à la normalisation (disque
+    seulement). `token` : PAT GitHub pour un dépôt privé.
     """
+    from . import sourcefetch  # import local : évite un cycle et le coût si non utilisé
+
     work = work_dir or (Path(lib_dir) / ".work")
+    has_filter = only_categories is not None or only_cards is not None
     try:
-        src = ingest(source, work, on_progress=on_progress)
+        src = None
+        # --- chemin fetch-sélectif (source explorable + filtre actif) ---
+        if has_filter:
+            remote = None
+            try:
+                remote = sourcefetch.list_remote_files(str(source), token=token)
+            except sourcefetch.FetchError:
+                remote = None       # exploration impossible -> repli téléchargement complet
+            if remote is not None:
+                kept = [rf.path for rf in remote
+                        if keep_rel(rf.path, only_categories, only_cards)]
+                src = sourcefetch.fetch_selected(str(source), kept, work / "selected",
+                                                 token=token, on_progress=on_progress)
+        # --- chemin complet (défaut / sources non explorables) ---
+        if src is None:
+            src = ingest(source, work, on_progress=on_progress)
         # racine « utile » : si un seul sous-dossier enveloppe tout (zip GitHub), descendre
         entries = [p for p in src.iterdir()] if src.is_dir() else []
         if len(entries) == 1 and entries[0].is_dir():
             src = entries[0]
         pack_name = name or re.sub(r"[^\w.-]", "_", Path(str(source)).stem) or "pack"
-        return normalize(src, install, pack_name, str(source), lib_dir, on_progress=on_progress)
+        # Le filtre est TOUJOURS repassé à normalize : sur le chemin fetch-sélectif il est
+        # déjà satisfait (no-op), sur le chemin complet c'est lui qui économise le disque.
+        return normalize(src, install, pack_name, str(source), lib_dir,
+                         on_progress=on_progress, only_categories=only_categories,
+                         only_cards=only_cards)
     finally:
         # Nettoyage systématique (succès COMME échec) : un ingest() qui échoue à mi-chemin ne
         # doit pas laisser de zip/dossier orphelin dans la bibliothèque.
