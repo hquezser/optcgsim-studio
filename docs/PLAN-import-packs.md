@@ -108,10 +108,18 @@ Page « Cosmétiques » branchée sur les MÊMES rapports JSON que le CLI :
 4. (plus tard, inspiré du créateur Themer) : composition de thème dans NOTRE frontend —
    hors périmètre de ce plan.
 
-## Chantier P5 — Catalogue communautaire (parcourir sans coller d'URL)
+## Chantier P5 — Catalogue communautaire — ABANDONNÉ (2026-07-19)
 
-Objectif : une page « Découvrir » listant des sources connues, un clic = `packs add` (le
-flux job existant, inchangé).
+> **Décision** : abandonné. Un catalogue LOCAL générique fait doublon avec l'existant —
+> P7 importe déjà n'importe quelle URL GitHub (public/privé) sélectivement, et P3 `--follow`
+> + `update` mémorise déjà la source de chaque pack et la re-télécharge (la bibliothèque EST
+> déjà la liste des sources de l'utilisateur). La seule valeur non-redondante d'un catalogue
+> serait le PARTAGE (registre distant), mais l'utilisateur préfère investir l'effort sur les
+> dépôts GitHub privés d'images custom (P8) et sur la publication d'un format contributif
+> (P9). Contenu original conservé ci-dessous pour mémoire.
+
+Objectif (abandonné) : une page « Découvrir » listant des sources connues, un clic = `packs
+add` (le flux job existant, inchangé).
 
 1. **Catalogue embarqué** : `studio/api/catalog.json` — liste éditée par le studio (pas de
    scraping), seedée avec les 2 sources déjà validées comme automatisables :
@@ -250,6 +258,78 @@ Effort : ~1-1,5 session (le fetch sélectif GitHub ajoute plus de substance que 
 rapport à la V1 « disque uniquement » du plan ; le support du token est un ajout mineur au
 même chantier, pas une charge supplémentaire significative).
 
+## Chantier P8 — Dépôt(s) privé(s) d'images + import granulaire par type de carte
+
+Deux demandes liées (2026-07-19) : (a) comment organiser le/les dépôt(s) GitHub privé(s)
+d'images custom ; (b) permettre l'import par petite partie (leaders, événements, dons, tapis…).
+
+### Constat de départ (ce qui existe déjà)
+
+- **P7 importe déjà sélectivement depuis UN dépôt GitHub** (Tree API + filtres
+  `only_categories`/`only_cards`, avec token privé). L'import « par parties » est donc une
+  question de FILTRE, pas d'obligation de découper en plusieurs dépôts.
+- Filtres actuels : catégories (cards/playmats/cardbacks/backgrounds/translation) + ids de
+  cartes (via decks ou leaders). Manque : filtrer par TYPE de carte (événement, stage,
+  personnage) et traiter les DON comme une catégorie à part.
+
+### (a) Organisation des dépôts — recommandation
+
+- **Layout = miroir StreamingAssets** (déjà attendu par packlib/P7, zéro transformation) :
+  `Cards/<SET>/<ID>.png` (+ `<ID>_small.jpg`), `Playmats/`, `CardBacks/`,
+  `Cards/Don/Don.png`, `TRANSLATION.txt`. À DOCUMENTER (voir P9 pour le pendant « spec »).
+- **Un seul dépôt suffit techniquement** (P7 filtre à la volée) ET c'est le plus ergonomique.
+  → **Découper en plusieurs dépôts UNIQUEMENT si la taille l'impose** : GitHub recommande des
+  dépôts < 1 Go (limite dure ~5 Go, fichiers < 100 Mo). Une collection d'alt-arts complète
+  peut approcher 2 Go (cf. repo FR = 2,2 Go) → dans ce cas, **découper par TYPE DE CONTENU**
+  (alt-arts / traductions / playmats-cardbacks), pas par set : ça épouse les catégories du
+  studio et les cadences de mise à jour distinctes. Le studio gère déjà N sources (chaque
+  dépôt ajouté est suivi/mis à jour indépendamment via P3).
+- Décision ouverte : un dépôt « tout-en-un » (simple) OU trois dépôts par type de contenu
+  (scalable) — dépend du volume réel que l'utilisateur compte héberger. Recommandation :
+  commencer mono-dépôt, scinder seulement si on dépasse ~1 Go.
+
+### (b) Import granulaire par type — implémentation
+
+1. **`cardmeta` étendu** : vendoriser une table id→type complète (`card_types.json`, 43 Ko,
+   2558 cartes ; via `scripts/refresh_leaders.py` renommé/élargi). Expose `card_type(id)` et
+   `ids_of_type("Event"|"Stage"|"Character"|"Leader")`. Remplace/complète `leaders.json`.
+2. **Filtre `only_types`** : généralise `leaders_only` — `only_types={"Event"}` → `only_cards`
+   = tous les ids de ce type (même mécanisme que leaders, qui devient `only_types={"Leader"}`).
+3. **DON** : `Cards/Don/Don.png` traité comme une (pseudo-)catégorie `don` dans `keep_rel`
+   (aujourd'hui il tombe dans « cards » sans id — le rendre filtrable à part).
+4. **Surface** : CLI `--only-type leader,event,don` ; UI cases à cocher par type ; aperçu de
+   taille par type (comme l'aperçu « leaders » déjà en place — juste étendu aux autres types).
+5. **Tests** : filtres par type sur arbo synthétique + fetch sélectif mocké (comme P7-d).
+
+Effort : ~½ session (extension du socle P7 déjà en place ; le gros est fait).
+
+## Chantier P9 — Publier le format « pack de decks » (contribution communautaire)
+
+Objectif : permettre à la communauté de créer et partager des packs de decks (le format
+`deckpack.json` de P6 existe déjà et fonctionne — il s'agit de le PUBLIER et d'outiller les
+contributeurs).
+
+1. **`docs/SPEC-deckpack.md`** : spécification formelle du format — champs (`name`, `author`,
+   `schema_version`, `decks[]` avec `name`/`tags`/`text`|`file`|`source_url`), règles de
+   validation (1 leader + 50 cartes, ≤4/id…), exemples complets, et guide d'hébergement
+   (déposer le `deckpack.json` sur un dépôt GitHub public, partager l'URL → les autres font
+   `studio decks import-pack <url>`). C'est le « catalogue partageable » évoqué en P5, mais
+   pour les decks et porté par la communauté.
+2. **`schema_version`** : ajouter le champ au format (défaut 1) pour la compat ascendante ;
+   `deckpack.resolve` avertit si version future inconnue plutôt que d'échouer en silence.
+3. **`studio decks validate-pack <source>`** : résout SANS persister (le rapport
+   imported/failed de P6 existe déjà) — permet à un contributeur de vérifier son pack avant
+   publication. API `POST /api/deckpacks/validate` (dry-run) pour l'UI.
+4. **(optionnel) JSON Schema** (`docs/deckpack.schema.json`) pour validation par des outils
+   externes/éditeurs.
+5. **Tests** : validate-pack (dry-run ne persiste rien), schema_version future = avertissement.
+
+Décision ouverte : où « publie »-t-on la spec ? (README du repo studio public + un dépôt
+d'exemple `deckpack-examples`). Pas de registre central géré par le studio (cohérent avec
+l'abandon de P5) — la communauté héberge et partage ses propres URLs.
+
+Effort : ~½ session (surtout de la doc + une commande validate ; le moteur existe).
+
 ## Garde-fous inchangés
 
 Le chemin d'écriture unique reste `_swap` (whitelist, magic-bytes+dimensions, atomique,
@@ -266,22 +346,20 @@ annoncée), jamais automatiquement en arrière-plan hors `packs update`.
 | P2 | CLI packs | ~½ session | ✅ fait |
 | P3 | --follow / update / reapply | ~½ session | ✅ fait |
 | P4 | frontend dropzone+préview+couverture | ~1-2 sessions | ✅ fait (+ jobs de fond) |
-| P5 | catalogue communautaire | ~½ session | à trancher (registre distant ou non) |
+| P5 | catalogue communautaire | — | ❌ ABANDONNÉ (doublon P7 + P3-follow) |
 | P6 | pack de decks (import groupé) | ~1 session | ✅ fait (deckpack.json) |
 | P7 | import sélectif (fetch ciblé GitHub + filtre disque partout) | ~1-1,5 session | ✅ fait (a→e, token privé inclus) |
+| P8 | dépôt(s) privé(s) + import granulaire par type de carte | ~½ session | à faire |
+| P9 | publier le format deckpack (spec + validate contributeur) | ~½ session | à faire |
 
-Décisions ouvertes historiques (résolues par la pratique) :
-- `Custom Cards`/`Extra Alts` (Dropbox) : conventions non vérifiées — le rapport
-  « non-classés » de P1 les révèle sans risque à chaque `packs add` réel.
+Décisions ouvertes historiques (résolues) :
+- `Custom Cards`/`Extra Alts` (Dropbox) : le rapport « non-classés » de P1 les révèle.
+- P7 : fetch sélectif avant DL pour GitHub (98 % d'économie mesurée), filtre disque sinon.
 
-Décisions ouvertes pour P5-P7 (à trancher avec l'utilisateur avant d'implémenter) :
-- P5 : catalogue purement local (édité par le studio) vs. permettre un registre distant
-  optionnel que l'utilisateur pointe explicitement (risque supply-chain à peser).
-- P6 : qui curate les manifestes `deckpack.json` au départ (toi manuellement, ou une
-  convention à proposer aux mainteneurs de decklists communautaires) ?
-- P7 : résolu — fetch sélectif AVANT téléchargement pour GitHub (disque + bande passante,
-  98 % d'économie mesurée), filtre après téléchargement pour Dropbox/autres (disque
-  seulement, limitation confirmée : leur endpoint de listing refuse les appels scriptés
-  sans navigateur complet, 403 constaté).
-- Ordre de traitement suggéré : P7 (le plus mécanique, débloque immédiatement la
-  couverture-de-decks déjà en place) → P5 (petit, haute valeur perçue) → P6 (le plus gros).
+Décisions ouvertes pour P8-P9 (à trancher avant d'implémenter) :
+- P8 : dépôt unique (simple) vs plusieurs dépôts par type de contenu (scalable > ~1 Go) —
+  dépend du volume que l'utilisateur compte héberger. Reco : mono-dépôt, scinder si > 1 Go.
+- P9 : où publier la spec (README public + dépôt d'exemple) ; pas de registre central géré
+  par le studio (cohérent avec l'abandon de P5).
+- Ordre suggéré : P8 (débloque l'import par type, extension directe de P7) puis P9 (doc +
+  petite commande de validation).
