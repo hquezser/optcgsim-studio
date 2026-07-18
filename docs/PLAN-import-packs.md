@@ -349,8 +349,8 @@ annoncée), jamais automatiquement en arrière-plan hors `packs update`.
 | P5 | catalogue communautaire | — | ❌ ABANDONNÉ (doublon P7 + P3-follow) |
 | P6 | pack de decks (import groupé) | ~1 session | ✅ fait (deckpack.json) |
 | P7 | import sélectif (fetch ciblé GitHub + filtre disque partout) | ~1-1,5 session | ✅ fait (a→e, token privé inclus) |
-| P8 | dépôt(s) privé(s) + import granulaire par type de carte | ~½ session | à faire |
-| P9 | publier le format deckpack (spec + validate contributeur) | ~½ session | à faire |
+| P8 | dépôt(s) privé(s) + import granulaire par type de carte | ~½ session | ✅ fait (card_types, --only-type, DON, UI par type ; multi-dépôts documenté) |
+| P9 | publier le format deckpack (spec + validate contributeur) | ~½ session | ✅ fait (repo optcgsim-deckpacks : spec+schema+exemple+validate CI ; studio: schema_version + validate-pack) |
 
 Décisions ouvertes historiques (résolues) :
 - `Custom Cards`/`Extra Alts` (Dropbox) : le rapport « non-classés » de P1 les révèle.
