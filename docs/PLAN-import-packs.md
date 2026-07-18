@@ -1,5 +1,13 @@
 # PLAN — Import ergonomique de packs communautaires (cartes + customs)
 
+> **AVANCEMENT (2026-07-18)** — P0→P4 FAITS (commits 9405a85, c5f587b, a10733e, 66c9b33,
+> 0e03ad8) + jobs de fond/progression (71e064f). 90 tests verts. `studio ui` fonctionne de
+> bout en bout : add/apply/remove/update/reapply, dropzone, couverture de decks, jobs qui
+> survivent à la fermeture de l'onglet. **P5-P7 ci-dessous = chantiers futurs demandés par
+> l'utilisateur (2026-07-18)**, pas encore commencés — reconnaissance faite, décisions
+> ouvertes à trancher avant d'implémenter (contrairement à P0-P4, ces trois-là ont de vraies
+> questions produit, pas seulement techniques).
+>
 > Objectif : un utilisateur pointe une SOURCE (zip, dossier, URL) et le studio fait le
 > reste — analyse, normalisation, prévisualisation, application, mise à jour, restauration.
 > Zéro réorganisation manuelle.
@@ -100,6 +108,91 @@ Page « Cosmétiques » branchée sur les MÊMES rapports JSON que le CLI :
 4. (plus tard, inspiré du créateur Themer) : composition de thème dans NOTRE frontend —
    hors périmètre de ce plan.
 
+## Chantier P5 — Catalogue communautaire (parcourir sans coller d'URL)
+
+Objectif : une page « Découvrir » listant des sources connues, un clic = `packs add` (le
+flux job existant, inchangé).
+
+1. **Catalogue embarqué** : `studio/api/catalog.json` — liste éditée par le studio (pas de
+   scraping), seedée avec les 2 sources déjà validées comme automatisables :
+   - Dropbox « Alt Cards Jon » (fonctionne tel quel via `packlib.ingest`) ;
+   - GitHub `Sparklight-TL/OPTCGSim_FR` (idem, `--follow` recommandé — régénéré par CI).
+   Chaque entrée : `{name, url, kind, description, maintainer}`.
+2. **optcgsimthemer.com — cas particulier** : pas d'URL de zip statique (le site génère un
+   thème à la demande via `/create` puis bouton Download). Le catalogue ne peut donc que
+   **lier vers le site**, pas déclencher un `packs add` direct — à documenter clairement
+   dans l'entrée catalogue (pas une limitation du studio, une limitation de la source).
+3. **API** : `GET /api/catalog` → catalogue embarqué. Décision ouverte : faut-il en plus
+   permettre à l'utilisateur d'ajouter SES PROPRES entrées (table locale
+   `catalog_entries`, éditable via CLI/UI) ? Je recommande OUI mais PAS de « registre
+   distant » auto-téléchargé par défaut (supply-chain : on ne veut pas qu'un studio
+   installé aujourd'hui se mette à faire confiance à une liste tierce qui change demain,
+   sans action explicite de l'utilisateur).
+4. **UI** : section « Découvrir » réutilisant les cartes de pack existantes (mêmes
+   boutons Ajouter/Appliquer) + badge de provenance (source, mainteneur) — transparence
+   sur l'origine tierce du contenu.
+
+Effort : ~½ session (le gros du travail — ingestion, jobs, UI de pack — existe déjà).
+
+## Chantier P6 — Format « pack de decks » (import groupé de decklists)
+
+Objectif : importer d'un coup une collection nommée (« Meta OP16 », « Rogue decks de
+Trecore ») au lieu d'un deck à la fois.
+
+1. **Manifeste `deckpack.json`** (nouveau format, PROPRE au studio — pas de scraping de
+   tier-list, cohérent avec le choix déjà fait pour `importer.py`) :
+   ```json
+   {"name": "Meta OP16", "author": "Trecore",
+    "decks": [
+      {"name": "Sanji Red", "tags": ["meta","op16"], "source_url": "https://..."},
+      {"name": "Rogue Zoro", "tags": ["rogue"], "text": "1xOP01-001\n4x..."}
+    ]}
+   ```
+   Chaque entrée résolue via `importer.from_url` OU `parse_text` (texte inline) — le
+   moteur d'import existant, sans modification.
+2. **Ingestion** : `packlib.ingest()` réutilisé tel quel (dossier/zip/URL) pour récupérer
+   le manifeste (+ éventuels `.txt` embarqués dans un zip).
+3. **Rapport structuré** (même philosophie que `PackReport`) : `{imported: [...], failed:
+   [{name, reason}]}` — jamais un deck en échec ne bloque silencieusement les autres.
+4. **CLI/API** : `studio decks import-pack <source>` / `POST /api/deckpacks/add` (job de
+   fond — résoudre N URLs peut prendre quelques secondes, réutilise le JobManager).
+5. **Décision ouverte** : qui écrit ces manifestes au départ ? Recommandation : curation
+   MANUELLE (par toi ou la personne qui maintient la source), pas de scraper de tier-list
+   automatique — même principe que « pas de scraper par site » déjà retenu pour les
+   decklists individuelles (les pages changent, le format manifeste non).
+
+Effort : ~1 session (nouveau module, mais s'appuie entièrement sur `importer.py` existant).
+
+## Chantier P7 — Import sélectif (économie disque)
+
+Deux demandes distinctes, toutes deux par extension de `normalize()`/`add_pack()` (pas de
+nouveau concept — symétrique au filtre `--only` déjà existant à l'application, mais
+appliqué ICI à la NORMALISATION pour que les fichiers exclus ne soient jamais écrits dans
+la bibliothèque, pas seulement ignorés à l'apply) :
+
+1. **`only_categories`** : identique au `--only` d'`apply_mirror` (cards/playmats/
+   cardbacks/backgrounds/translation), mais au moment de `normalize()` → économie disque
+   réelle dans `~/.optcgsim-studio/packs/<nom>/`, pas seulement au jeu.
+2. **`only_cards`** : restreint aux ids d'un ensemble donné, calculé depuis :
+   a. **un ou plusieurs decks déjà en base** (« importer seulement pour ce(s) deck(s) ») —
+      réutilise EXACTEMENT la logique déjà écrite pour `coverage()`
+      (`set(deck["cards"]) | {deck["leader"]}`, union sur les decks cochés) ;
+   b. **« leaders alternatifs uniquement »** — nécessite de savoir QUELS ids sont des
+      leaders. Trouvé : le projet frère `optcgsim-haki` a déjà cette base
+      (`data/card_stats.json`, 2558 cartes, champ `card_type == "Leader"`). À vendoriser
+      (même principe que le parser vendorisé dans rogue-lab) dans un petit module
+      `studio/assets/cardmeta.py` exposant `is_leader(card_id) -> bool`.
+3. **Nuance à annoncer honnêtement dans l'UI** : ce filtre économise le DISQUE (taille
+   finale du pack en bibliothèque), pas nécessairement la BANDE PASSANTE — une source zip
+   monolithique (Dropbox/GitHub) doit être entièrement téléchargée avant de pouvoir la
+   filtrer. Un téléchargement sélectif fichier-par-fichier (API GitHub, liens Dropbox
+   individuels) serait un chantier bien plus lourd (P7-bis, hors périmètre initial, à
+   n'envisager que si la bande passante devient le vrai goulot).
+4. **Rapport** : nouvelle catégorie « hors périmètre (filtré par choix) », distincte de
+   « non classé » — un exclu volontaire n'est pas une erreur de reconnaissance.
+
+Effort : ~½-1 session (extension ciblée + vendoring d'une seule table de métadonnées).
+
 ## Garde-fous inchangés
 
 Le chemin d'écriture unique reste `_swap` (whitelist, magic-bytes+dimensions, atomique,
@@ -109,15 +202,27 @@ annoncée), jamais automatiquement en arrière-plan hors `packs update`.
 
 ## Ordre et effort
 
-| # | Chantier | Effort | Débloque |
+| # | Chantier | Effort | État |
 |---|---|---|---|
-| P0 | apply_mirror | ~½ session | Themer complet (menus+Don inclus) |
-| P1 | packlib (3 layouts + rapport) | ~1 session | Dropbox Jon + repo FR |
-| P2 | CLI packs | ~½ session | utilisable au quotidien |
-| P3 | --follow / update / reapply | ~½ session | traduction FR toujours fraîche |
-| P4 | frontend dropzone+préview+couverture | ~1-2 sessions | ergonomie grand public |
+| P0 | apply_mirror | ~½ session | ✅ fait |
+| P1 | packlib (3 layouts + rapport) | ~1 session | ✅ fait |
+| P2 | CLI packs | ~½ session | ✅ fait |
+| P3 | --follow / update / reapply | ~½ session | ✅ fait |
+| P4 | frontend dropzone+préview+couverture | ~1-2 sessions | ✅ fait (+ jobs de fond) |
+| P5 | catalogue communautaire | ~½ session | à trancher (registre distant ou non) |
+| P6 | pack de decks (import groupé) | ~1 session | à trancher (qui écrit les manifestes) |
+| P7 | import sélectif (deck(s)/leaders only) | ~½-1 session | vendoring card_stats.json requis |
 
-Décisions ouvertes :
-- P4 après P2 (CLI d'abord, mon avis : oui — valide les rapports avant de les habiller) ?
+Décisions ouvertes historiques (résolues par la pratique) :
 - `Custom Cards`/`Extra Alts` (Dropbox) : conventions non vérifiées — le rapport
-  « non-classés » de P1 les révélera sans risque au premier `packs add` réel.
+  « non-classés » de P1 les révèle sans risque à chaque `packs add` réel.
+
+Décisions ouvertes pour P5-P7 (à trancher avec l'utilisateur avant d'implémenter) :
+- P5 : catalogue purement local (édité par le studio) vs. permettre un registre distant
+  optionnel que l'utilisateur pointe explicitement (risque supply-chain à peser).
+- P6 : qui curate les manifestes `deckpack.json` au départ (toi manuellement, ou une
+  convention à proposer aux mainteneurs de decklists communautaires) ?
+- P7 : l'économie visée est le DISQUE (résolu par le plan ci-dessus) ou aussi la BANDE
+  PASSANTE (nécessiterait un chantier bien plus lourd, P7-bis, non planifié ici) ?
+- Ordre de traitement suggéré : P7 (le plus mécanique, débloque immédiatement la
+  couverture-de-decks déjà en place) → P5 (petit, haute valeur perçue) → P6 (le plus gros).
