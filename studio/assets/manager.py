@@ -282,8 +282,22 @@ class AssetManager:
                 return d
         return pack_dir
 
+    @staticmethod
+    def mirror_category(rel: str) -> str:
+        """Catégorie d'un chemin miroir (pour le filtre `--only`)."""
+        top = rel.replace("\\", "/").split("/")[0]
+        if top == "Cards":
+            return "cards"
+        if top == "Playmats":
+            return "playmats"
+        if top == "CardBacks":
+            return "cardbacks"
+        if rel in ("background.jpg", "deckeditbackground.jpg"):
+            return "backgrounds"
+        return "other"
+
     def apply_mirror(self, pack_dir: Path, origin: str | None = None,
-                     dry_run: bool = False) -> dict:
+                     dry_run: bool = False, only: set[str] | None = None) -> dict:
         """Applique un pack calqué sur StreamingAssets (modèle du site Themer & assimilés).
 
         Règle unique : pour chaque image du pack, si le MÊME chemin relatif existe déjà dans
@@ -304,7 +318,8 @@ class AssetManager:
         root = self._find_mirror_root(pack_dir)
         origin = origin or f"mirror:{pack_dir.name}"
         sa = self.install.streaming_assets.resolve()
-        report: dict = {"root": str(root), "applied": [], "ignored": [], "skipped_txt": []}
+        report: dict = {"root": str(root), "applied": [], "ignored": [],
+                        "skipped_txt": [], "filtered": [], "collisions": []}
 
         for src in sorted(p for p in root.rglob("*") if p.is_file()):
             if src.is_symlink():
@@ -316,13 +331,20 @@ class AssetManager:
                 report["skipped_txt"].append(str(rel))
                 continue
             if ext not in (".png", ".jpg", ".jpeg"):
-                report["ignored"].append({"path": str(rel), "reason": "type non cosmétique"})
+                continue        # non-image (manifest.json, README, .DS_Store…) : ignoré en silence
+            if only is not None and self.mirror_category(str(rel)) not in only:
+                report["filtered"].append(str(rel))
                 continue
             target = (sa / rel)
             if not target.exists():
                 report["ignored"].append(
                     {"path": str(rel), "reason": "aucune cible correspondante dans le jeu"})
                 continue
+            # collision : cette cible est déjà tenue par un AUTRE pack (dernier appliqué gagne ;
+            # le backup reste l'ORIGINAL, donc restore ramène toujours au jeu d'origine).
+            prev = self._manifest.get(str(target.resolve()))
+            if prev and prev.get("source") not in (None, origin):
+                report["collisions"].append({"path": str(rel), "previous": prev["source"]})
             # format : le miroir doit respecter le format de la cible existante
             t_fmt = "png" if target.suffix.lower() == ".png" else "jpeg"
             try:
@@ -420,6 +442,24 @@ class AssetManager:
                 self.restore(Path(entry["target"]))
                 n += 1
             else:   # cible disparue (màj du sim) : le backup n'a plus d'objet
+                del self._manifest[key]
+                self._save_manifest()
+        return n
+
+    def restore_source(self, origin: str) -> int:
+        """Restaure uniquement les cibles posées par un pack donné (`origin`).
+
+        Ne restaure PAS une cible re-tenue depuis par un autre pack (collision : le dernier
+        appliqué reste ; retirer le pack sous-jacent ne doit pas défaire le pack visible)."""
+        n = 0
+        for key in list(self._manifest):
+            entry = self._manifest[key]
+            if entry.get("source") != origin:
+                continue
+            if Path(entry["target"]).exists():
+                self.restore(Path(entry["target"]))
+                n += 1
+            else:
                 del self._manifest[key]
                 self._save_manifest()
         return n

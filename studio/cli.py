@@ -73,10 +73,40 @@ def cmd_assets_restore_all(args) -> int:
 
 
 # --------------------------------------------------------------------------- packs
+_PACK_LIB = packlib.DEFAULT_LIB
+
+
+def _pack_kind(rep) -> str:
+    cats = []
+    if rep.cards:
+        cats.append("cards")
+    if rep.playmats:
+        cats.append("playmats")
+    if rep.cardbacks:
+        cats.append("cardbacks")
+    if rep.backgrounds:
+        cats.append("backgrounds")
+    if rep.translation:
+        cats.append("translation")
+    return cats[0] if len(cats) == 1 else "mixed"
+
+
+def _find_pack(store, name: str) -> dict | None:
+    return next((p for p in store.list("cosmetic_packs") if p["name"] == name), None)
+
+
 def cmd_packs_add(args) -> int:
     inst = _install(args)
     pack_dir, rep = packlib.add_pack(args.source, inst, name=args.name)
-    print(f"Pack « {rep.name} » normalisé -> {pack_dir}")
+    manifest = json.loads((pack_dir / "manifest.json").read_text())
+    with LocalStore(Path(args.db)) as store:
+        existing = _find_pack(store, rep.name)
+        rec = {"name": rep.name, "kind": _pack_kind(rep),
+               "local_path": str(pack_dir), "manifest": manifest}
+        if existing:
+            rec["id"] = existing["id"]           # réécrase le même pack (nom unique)
+        store.put("cosmetic_packs", rec)
+    print(f"Pack « {rep.name} » ({_pack_kind(rep)}) normalisé -> {pack_dir}")
     print(f"  {rep.summary()}")
     if rep.variants:
         print(f"  {len(rep.variants)} variante(s) (1re gardée) : "
@@ -87,7 +117,96 @@ def cmd_packs_add(args) -> int:
             print(f"    - {u['path']} : {u['reason']}")
         if len(rep.unclassified) > 10:
             print(f"    … et {len(rep.unclassified) - 10} de plus")
-    print("Rien n'a été appliqué au jeu. (application : chantier P2 `studio packs apply`)")
+    print(f"Enregistré en bibliothèque. `studio packs apply {rep.name} --dry-run` "
+          f"pour prévisualiser.")
+    return 0
+
+
+def cmd_packs_list(args) -> int:
+    with LocalStore(Path(args.db)) as store:
+        packs = store.list("cosmetic_packs")
+    if not packs:
+        print("Bibliothèque vide. `studio packs add <source>`.")
+        return 0
+    for p in packs:
+        m = p.get("manifest") or {}
+        print(f"{p['name']:<28} {p['kind']:<11} "
+              f"cartes:{len(m.get('cards', [])):<4} "
+              f"present:{m.get('present_in_install', 0):<4} {p['local_path']}")
+    return 0
+
+
+def cmd_packs_show(args) -> int:
+    with LocalStore(Path(args.db)) as store:
+        p = _find_pack(store, args.name)
+    if p is None:
+        raise SystemExit(f"Pack inconnu : {args.name} (voir `studio packs list`)")
+    m = p.get("manifest") or {}
+    print(f"Pack « {p['name']} » ({p['kind']}) — source {m.get('source', '?')}")
+    print(f"  cartes={len(m.get('cards', []))} playmats={m.get('playmats')} "
+          f"dos={m.get('cardbacks')} fonds={m.get('backgrounds')} "
+          f"traduction={m.get('translation')}")
+    print(f"  présents dans le jeu : {m.get('present_in_install', 0)}")
+    if m.get("unclassified"):
+        print(f"  non classés : {len(m['unclassified'])}")
+    # état actif : swaps du manager dont la source est ce pack
+    mgr = AssetManager(_install(args))
+    mine = [s for s in mgr.status() if s.get("source") == f"pack:{p['name']}"]
+    if mine:
+        by_state: dict[str, int] = {}
+        for s in mine:
+            by_state[s["state"]] = by_state.get(s["state"], 0) + 1
+        print(f"  appliqué : {by_state}")
+    else:
+        print("  appliqué : non")
+    return 0
+
+
+def cmd_packs_apply(args) -> int:
+    with LocalStore(Path(args.db)) as store:
+        p = _find_pack(store, args.name)
+    if p is None:
+        raise SystemExit(f"Pack inconnu : {args.name} (voir `studio packs list`)")
+    pack_dir = Path(p["local_path"])
+    if not pack_dir.exists():
+        raise SystemExit(f"Dossier du pack introuvable : {pack_dir}")
+    only = set(args.only.split(",")) if args.only else None
+    mgr = AssetManager(_install(args))
+    origin = f"pack:{p['name']}"
+    rep = mgr.apply_mirror(pack_dir, origin=origin, dry_run=args.dry_run, only=only)
+    verb = "seraient appliqués" if args.dry_run else "appliqués"
+    print(f"{len(rep['applied'])} fichiers {verb}"
+          + (f" (filtre : {args.only})" if only else "") + ".")
+    # traduction : fusion (jamais écrasement) si présente et non filtrée
+    txt = pack_dir / "TRANSLATION.txt"
+    if txt.exists() and (only is None or "translation" in only):
+        if args.dry_run:
+            print("  traduction : serait fusionnée (clés officielles préservées).")
+        else:
+            mgr.apply_translation(txt, origin=origin)
+            print("  traduction fusionnée.")
+    if rep["collisions"]:
+        print(f"  ⚠ {len(rep['collisions'])} collision(s) — ce pack prend le dessus "
+              f"(le backup reste l'ORIGINAL) :")
+        for c in rep["collisions"][:5]:
+            print(f"    - {c['path']} (tenu par {c['previous']})")
+    if rep["ignored"]:
+        print(f"  {len(rep['ignored'])} ignoré(s) (cible absente / format).")
+    if not args.dry_run and rep["applied"]:
+        print("Ferme le sim avant/pendant. "
+              f"`studio packs remove {p['name']}` restaure ce pack.")
+    return 0
+
+
+def cmd_packs_remove(args) -> int:
+    with LocalStore(Path(args.db)) as store:
+        p = _find_pack(store, args.name)
+        if p is None:
+            raise SystemExit(f"Pack inconnu : {args.name}")
+        n = AssetManager(_install(args)).restore_source(f"pack:{p['name']}")
+        store.delete("cosmetic_packs", p["id"])       # tombstone (synchronisable)
+    print(f"{n} fichier(s) restauré(s) à l'original ; pack « {p['name']} » retiré "
+          f"de la bibliothèque.")
     return 0
 
 
@@ -167,12 +286,25 @@ def build_parser() -> argparse.ArgumentParser:
     sa.add_parser("status").set_defaults(func=cmd_assets_status)
     sa.add_parser("restore-all").set_defaults(func=cmd_assets_restore_all)
 
-    pp = sub.add_parser("packs", help="bibliothèque de packs d'assets (normalisation)")
+    pp = sub.add_parser("packs", help="bibliothèque de packs d'assets (normaliser + appliquer)")
     sp = pp.add_subparsers(dest="sub", required=True)
     pad = sp.add_parser("add", help="normaliser une source (dossier/zip/URL) en pack")
     pad.add_argument("source", help="dossier, .zip, ou URL (GitHub / Dropbox partagé)")
     pad.add_argument("--name", default=None, help="nom du pack en bibliothèque")
     pad.set_defaults(func=cmd_packs_add)
+    sp.add_parser("list", help="lister la bibliothèque").set_defaults(func=cmd_packs_list)
+    psh = sp.add_parser("show", help="détail d'un pack + état appliqué")
+    psh.add_argument("name")
+    psh.set_defaults(func=cmd_packs_show)
+    pap = sp.add_parser("apply", help="appliquer un pack au jeu")
+    pap.add_argument("name")
+    pap.add_argument("--only", default=None,
+                     help="catégories (cards,playmats,cardbacks,backgrounds,translation)")
+    pap.add_argument("--dry-run", action="store_true", help="prévisualiser sans écrire")
+    pap.set_defaults(func=cmd_packs_apply)
+    prm = sp.add_parser("remove", help="restaurer les originaux et retirer le pack")
+    prm.add_argument("name")
+    prm.set_defaults(func=cmd_packs_remove)
 
     pd = sub.add_parser("decks", help="importation et gestion de decklists")
     sd = pd.add_subparsers(dest="sub", required=True)

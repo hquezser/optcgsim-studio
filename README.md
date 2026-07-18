@@ -106,12 +106,22 @@ pack canonique de bibliothèque, par classification fichier par fichier :
 - **tout le reste → rapporté « non classé » avec raison** (jamais de perte silencieuse).
 
 ```bash
-studio packs add ~/theme.zip
+studio packs add ~/theme.zip                        # normalise + enregistre en bibliothèque
 studio packs add https://github.com/Sparklight-TL/OPTCGSim_FR   # traduction + cartes FR
+studio packs list                                   # bibliothèque (nom, type, couverture)
+studio packs show <nom>                             # détail + état appliqué
+studio packs apply <nom> --dry-run                  # prévisualise
+studio packs apply <nom> --only cards,translation   # applique (filtre par catégorie)
+studio packs remove <nom>                           # restaure les originaux de CE pack
 ```
 
-`add` normalise et rapporte, **n'applique rien** ; l'application (`packs apply`), les
-collisions entre packs et les sources suivies arrivent au chantier P2/P3.
+`add` normalise, enregistre en bibliothèque (`~/.optcgsim-studio/packs/`, table
+`cosmetic_packs` synchronisable) et **n'applique rien**. `apply` route le pack miroir vers
+`apply_mirror` + fusionne la traduction éventuelle (jamais d'écrasement de `TRANSLATION.txt`).
+**Collisions** entre packs : le dernier appliqué gagne, avec avertissement — mais le backup
+reste toujours l'ORIGINAL du jeu, donc `remove`/`restore-all` ramènent à l'état d'usine.
+`remove` ne restaure que les cibles encore tenues par ce pack (une cible reprise depuis par
+un autre pack n'est pas défaite). Les sources suivies (`--follow`/`update`) arrivent en P3.
 
 ## Pilier 3 — Synchronisation multi-appareils (`studio sync`)
 
