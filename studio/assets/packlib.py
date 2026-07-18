@@ -23,6 +23,7 @@ n'écrit RIEN dans le jeu (c'est le rôle du manager, seul détenteur des garde-
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -65,6 +66,7 @@ class PackReport:
     variants: list[dict] = field(default_factory=list)       # {target, kept, dropped}
     present_in_install: int = 0                        # combien de cibles existent déjà
     total_files: int = 0
+    files: dict = field(default_factory=dict)          # rel -> sha1 (delta d'update)
 
     def summary(self) -> str:
         return (f"{len(self.cards)} cartes, {len(self.playmats)} playmats, "
@@ -258,11 +260,13 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
             {"path": str(f.relative_to(src_dir)),
              "reason": "ni chemin miroir, ni id de carte, ni asset spécial reconnu"})
 
-    # matérialise le pack canonique
+    # matérialise le pack canonique + empreinte par fichier (pour le delta d'`update`)
+    files: dict[str, str] = {}
     for rel, src in chosen.items():
         dst = pack_dir / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
+        files[rel] = hashlib.sha1(dst.read_bytes()).hexdigest()
         top = rel.split("/")[0]
         if top == "Cards":
             m = re.search(CARD_ID, rel)
@@ -279,7 +283,10 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
     rep.cards = sorted(set(rep.cards))
 
     if translation_src is not None:
-        shutil.copy2(translation_src, pack_dir / "TRANSLATION.txt")
+        dst = pack_dir / "TRANSLATION.txt"
+        shutil.copy2(translation_src, dst)
+        files["TRANSLATION.txt"] = hashlib.sha1(dst.read_bytes()).hexdigest()
+    rep.files = files
 
     (pack_dir / "manifest.json").write_text(json.dumps({
         "name": name, "source": source,
@@ -287,6 +294,7 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
         "cardbacks": sorted(rep.cardbacks), "backgrounds": sorted(rep.backgrounds),
         "translation": rep.translation, "present_in_install": rep.present_in_install,
         "unclassified": rep.unclassified, "variants": rep.variants,
+        "files": files,
     }, indent=1, ensure_ascii=False))
     return pack_dir, rep
 

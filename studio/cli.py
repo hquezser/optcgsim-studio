@@ -97,8 +97,10 @@ def _find_pack(store, name: str) -> dict | None:
 
 def cmd_packs_add(args) -> int:
     inst = _install(args)
-    pack_dir, rep = packlib.add_pack(args.source, inst, name=args.name)
+    pack_dir, rep = packlib.add_pack(args.source, inst, name=args.name, lib_dir=_PACK_LIB)
     manifest = json.loads((pack_dir / "manifest.json").read_text())
+    if args.follow:
+        manifest["followed"] = True              # source re-téléchargeable via `packs update`
     with LocalStore(Path(args.db)) as store:
         existing = _find_pack(store, rep.name)
         rec = {"name": rep.name, "kind": _pack_kind(rep),
@@ -106,7 +108,8 @@ def cmd_packs_add(args) -> int:
         if existing:
             rec["id"] = existing["id"]           # réécrase le même pack (nom unique)
         store.put("cosmetic_packs", rec)
-    print(f"Pack « {rep.name} » ({_pack_kind(rep)}) normalisé -> {pack_dir}")
+    tag = " (suivi)" if args.follow else ""
+    print(f"Pack « {rep.name} » ({_pack_kind(rep)}){tag} normalisé -> {pack_dir}")
     print(f"  {rep.summary()}")
     if rep.variants:
         print(f"  {len(rep.variants)} variante(s) (1re gardée) : "
@@ -195,6 +198,87 @@ def cmd_packs_apply(args) -> int:
     if not args.dry_run and rep["applied"]:
         print("Ferme le sim avant/pendant. "
               f"`studio packs remove {p['name']}` restaure ce pack.")
+    return 0
+
+
+def _reapply_if_active(mgr, name: str, pack_dir: Path) -> int:
+    """Ré-applique un pack s'il a des swaps actifs (après update). Renvoie le nb appliqué."""
+    origin = f"pack:{name}"
+    if any(s.get("source") == origin for s in mgr.status()):
+        rep = mgr.apply_mirror(pack_dir, origin=origin)
+        txt = pack_dir / "TRANSLATION.txt"
+        if txt.exists():
+            mgr.apply_translation(txt, origin=origin)
+        return len(rep["applied"])
+    return 0
+
+
+def cmd_packs_update(args) -> int:
+    inst = _install(args)
+    mgr = AssetManager(inst)
+    with LocalStore(Path(args.db)) as store:
+        packs = ([_find_pack(store, args.name)] if args.name
+                 else [p for p in store.list("cosmetic_packs")
+                       if (p.get("manifest") or {}).get("followed")])
+        packs = [p for p in packs if p]
+        if not packs:
+            print("Aucun pack suivi à mettre à jour "
+                  "(`studio packs add --follow <url>`).")
+            return 0
+        for p in packs:
+            man = p.get("manifest") or {}
+            src = man.get("source")
+            if not man.get("followed") or not src:
+                print(f"« {p['name']} » : non suivi, ignoré.")
+                continue
+            old_files = man.get("files", {})
+            try:
+                pack_dir, rep = packlib.add_pack(src, inst, name=p["name"], lib_dir=_PACK_LIB)
+            except (packlib.PackError, OSError) as e:
+                print(f"« {p['name']} » : échec du téléchargement/normalisation — {e}")
+                continue
+            new_man = json.loads((pack_dir / "manifest.json").read_text())
+            new_man["followed"] = True
+            new_files = new_man.get("files", {})
+            changed = sorted(f for f in new_files if old_files.get(f) != new_files[f])
+            removed = sorted(f for f in old_files if f not in new_files)
+            store.put("cosmetic_packs", {**p, "manifest": new_man,
+                                         "local_path": str(pack_dir),
+                                         "kind": p["kind"]})
+            if not changed and not removed:
+                print(f"« {p['name']} » : déjà à jour.")
+                continue
+            print(f"« {p['name']} » : {len(changed)} modifié(s), {len(removed)} retiré(s).")
+            n = _reapply_if_active(mgr, p["name"], pack_dir)
+            if n:
+                print(f"  ré-appliqué ({n} fichiers) — pack actif.")
+    return 0
+
+
+def cmd_packs_reapply(args) -> int:
+    """Ré-applique les packs dont les swaps ont été écrasés par une mise à jour du sim."""
+    inst = _install(args)
+    mgr = AssetManager(inst)
+    stale = {s["source"] for s in mgr.status()
+             if s["state"] == "overwritten" and s.get("source", "").startswith("pack:")}
+    if not stale:
+        print("Aucun pack à ré-appliquer (rien n'a été écrasé).")
+        return 0
+    with LocalStore(Path(args.db)) as store:
+        total = 0
+        for origin in sorted(stale):
+            name = origin[len("pack:"):]
+            p = _find_pack(store, name)
+            if p is None or not Path(p["local_path"]).exists():
+                print(f"« {name} » : dossier de pack absent, impossible de ré-appliquer.")
+                continue
+            rep = mgr.apply_mirror(Path(p["local_path"]), origin=origin)
+            txt = Path(p["local_path"]) / "TRANSLATION.txt"
+            if txt.exists():
+                mgr.apply_translation(txt, origin=origin)
+            total += len(rep["applied"])
+            print(f"« {name} » : {len(rep['applied'])} fichiers ré-appliqués.")
+    print(f"{total} fichier(s) ré-appliqué(s). Ferme le sim avant/pendant.")
     return 0
 
 
@@ -291,7 +375,15 @@ def build_parser() -> argparse.ArgumentParser:
     pad = sp.add_parser("add", help="normaliser une source (dossier/zip/URL) en pack")
     pad.add_argument("source", help="dossier, .zip, ou URL (GitHub / Dropbox partagé)")
     pad.add_argument("--name", default=None, help="nom du pack en bibliothèque")
+    pad.add_argument("--follow", action="store_true",
+                     help="source suivie : re-téléchargeable via `packs update`")
     pad.set_defaults(func=cmd_packs_add)
+    pup = sp.add_parser("update", help="re-télécharger les packs suivis (delta + ré-apply)")
+    pup.add_argument("name", nargs="?", default=None, help="un pack précis (sinon tous)")
+    pup.set_defaults(func=cmd_packs_update)
+    sp.add_parser("reapply",
+                  help="ré-appliquer les packs écrasés par une màj du sim"
+                  ).set_defaults(func=cmd_packs_reapply)
     sp.add_parser("list", help="lister la bibliothèque").set_defaults(func=cmd_packs_list)
     psh = sp.add_parser("show", help="détail d'un pack + état appliqué")
     psh.add_argument("name")

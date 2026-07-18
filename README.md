@@ -121,7 +121,22 @@ studio packs remove <nom>                           # restaure les originaux de 
 **Collisions** entre packs : le dernier appliqué gagne, avec avertissement — mais le backup
 reste toujours l'ORIGINAL du jeu, donc `remove`/`restore-all` ramènent à l'état d'usine.
 `remove` ne restaure que les cibles encore tenues par ce pack (une cible reprise depuis par
-un autre pack n'est pas défaite). Les sources suivies (`--follow`/`update`) arrivent en P3.
+un autre pack n'est pas défaite).
+
+### Sources suivies & mises à jour
+
+```bash
+studio packs add --follow https://github.com/Sparklight-TL/OPTCGSim_FR
+studio packs update [nom]     # re-télécharge les packs suivis, diffe, ré-applique le delta
+studio packs reapply          # ré-applique les packs écrasés par une mise à jour du sim
+```
+
+Le manifeste garde une empreinte (sha1) par fichier : `update` re-télécharge la source
+suivie, calcule le delta (modifiés/retirés) et **ne ré-applique que si le pack est déjà
+actif**. Indispensable pour le repo FR (régénéré par CI → sans suivi la traduction se périme
+en silence). `reapply` détecte les swaps passés à l'état `overwritten` (typiquement après
+une mise à jour du simulateur qui réécrit `StreamingAssets`) et réinjecte les packs depuis
+la bibliothèque, sans re-téléchargement.
 
 ## Pilier 3 — Synchronisation multi-appareils (`studio sync`)
 
