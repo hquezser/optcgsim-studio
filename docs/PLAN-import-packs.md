@@ -267,7 +267,7 @@ annoncée), jamais automatiquement en arrière-plan hors `packs update`.
 | P3 | --follow / update / reapply | ~½ session | ✅ fait |
 | P4 | frontend dropzone+préview+couverture | ~1-2 sessions | ✅ fait (+ jobs de fond) |
 | P5 | catalogue communautaire | ~½ session | à trancher (registre distant ou non) |
-| P6 | pack de decks (import groupé) | ~1 session | à trancher (qui écrit les manifestes) |
+| P6 | pack de decks (import groupé) | ~1 session | ✅ fait (deckpack.json) |
 | P7 | import sélectif (fetch ciblé GitHub + filtre disque partout) | ~1-1,5 session | ✅ fait (a→e, token privé inclus) |
 
 Décisions ouvertes historiques (résolues par la pratique) :
