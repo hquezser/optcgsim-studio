@@ -333,6 +333,12 @@ def cmd_decks_list(args) -> int:
 
 
 # --------------------------------------------------------------------------- sync
+def cmd_ui(args) -> int:
+    from .api.server import run_ui
+    return run_ui(install=_install(args), db_path=args.db, port=args.port,
+                  open_browser=not args.no_open)
+
+
 def cmd_sync(args) -> int:
     if not args.url or not args.token:
         print("Mode DÉCONNECTÉ (SQLite local uniquement).\n"
@@ -408,6 +414,11 @@ def build_parser() -> argparse.ArgumentParser:
     di.add_argument("--tags", default=None, help="tags séparés par des virgules")
     di.set_defaults(func=cmd_decks_import)
     sd.add_parser("list").set_defaults(func=cmd_decks_list)
+
+    pui = sub.add_parser("ui", help="lance l'interface web locale (zéro dépendance)")
+    pui.add_argument("--port", type=int, default=8770)
+    pui.add_argument("--no-open", action="store_true", help="ne pas ouvrir le navigateur")
+    pui.set_defaults(func=cmd_ui)
 
     ps = sub.add_parser("sync", help="synchronisation cloud (mode connecté)")
     ps.add_argument("--url", default=None)

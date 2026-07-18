@@ -20,3 +20,4 @@ include = ["studio*"]
 
 [tool.setuptools.package-data]
 "studio.db" = ["*.sql"]
+"studio.api" = ["static/*.html"]

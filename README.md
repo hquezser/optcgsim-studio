@@ -4,6 +4,22 @@ Plateforme de gestion de l'expérience de jeu OPTCGSim : **QoL, personnalisation
 importation universelle de decklists, synchronisation multi-appareils** (desktop aujourd'hui,
 iOS/Android demain).
 
+## Interface web (`studio ui`)
+
+```bash
+studio ui                 # lance l'UI locale (http://127.0.0.1:8770) et ouvre le navigateur
+```
+
+Interface **zéro dépendance** : servie par la bibliothèque standard Python (aucun Node, aucun
+`npm install`, aucun build). On glisse un `.zip` de thème, on colle une URL ou une decklist,
+on applique/restaure en un clic. Le crochet d'adoption : chaque pack affiche **combien de
+cartes de _tes_ decks il habille** (« ce pack couvre 38/51 cartes de ton deck »). Écoute sur
+`127.0.0.1` uniquement, jamais exposée au réseau.
+
+L'UI parle à une **API JSON** (`studio/api/server.py`) qui est le même contrat que consommera
+un futur client Next.js/Tauri (mobile) — la logique reste côté Python (voir
+`frontend/README.md` pour la structure portable).
+
 > **Positionnement dans l'écosystème.** Trois projets frères, finalités disjointes :
 > [optcgsim-haki](https://github.com/hquezser/optcgsim-haki) = décision *in-match* (overlay,
 > lecture de logs, **aucune modification du jeu** — promesse de son README, intacte) ;

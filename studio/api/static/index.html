@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OPTCGSim Studio</title>
+<style>
+  :root{
+    --bg:#0e1016; --panel:#161a24; --panel2:#1d222f; --line:#2a3040;
+    --txt:#e7ecf5; --muted:#8b93a7; --accent:#e2495a; --accent2:#f0b23a;
+    --ok:#4ec98a; --warn:#f0b23a; --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  a{color:var(--accent2)}
+  header{padding:20px 26px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:16px;position:sticky;top:0;background:var(--bg);z-index:5}
+  header h1{font-size:18px;margin:0;letter-spacing:.3px}
+  header h1 b{color:var(--accent)}
+  .status{margin-left:auto;display:flex;gap:18px;font-size:12px;color:var(--muted)}
+  .status b{color:var(--txt)}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px}
+  .dot.ok{background:var(--ok)} .dot.no{background:var(--accent)}
+  main{max-width:1080px;margin:0 auto;padding:26px;display:grid;gap:26px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:20px 22px}
+  section h2{margin:0 0 4px;font-size:15px}
+  .sub{color:var(--muted);font-size:12px;margin:0 0 16px}
+  .drop{border:2px dashed var(--line);border-radius:var(--radius);padding:26px;text-align:center;
+    color:var(--muted);transition:.15s;cursor:pointer}
+  .drop.hot{border-color:var(--accent);background:#1a1420;color:var(--txt)}
+  input,textarea,button,select{font:inherit;color:var(--txt);border-radius:9px;border:1px solid var(--line);
+    background:var(--panel2);padding:9px 11px}
+  input,textarea{width:100%}
+  textarea{min-height:88px;resize:vertical;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+  .row{display:flex;gap:9px;margin-top:9px}
+  button{background:var(--accent);border:none;cursor:pointer;font-weight:600;padding:9px 15px}
+  button:hover{filter:brightness(1.08)} button.ghost{background:var(--panel2);border:1px solid var(--line);font-weight:500}
+  button.mini{padding:5px 10px;font-size:12px}
+  .pack{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
+    margin-bottom:12px}
+  .pack .top{display:flex;align-items:center;gap:10px}
+  .pack .name{font-weight:600}
+  .tag{font-size:11px;padding:2px 8px;border-radius:20px;background:#20283a;color:var(--muted)}
+  .tag.applied{background:#173427;color:var(--ok)} .tag.follow{background:#2a2418;color:var(--accent2)}
+  .pack .meta{color:var(--muted);font-size:12px;margin:7px 0 11px}
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  .cov{margin-top:12px;border-top:1px solid var(--line);padding-top:12px;display:none}
+  .cov.show{display:block}
+  .bar{height:8px;background:#0d1017;border-radius:6px;overflow:hidden;margin:4px 0 2px}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .covrow{margin-bottom:10px} .covrow .l{display:flex;justify-content:space-between;font-size:12px}
+  .covrow .l b{color:var(--txt)} .covrow .l span{color:var(--muted)}
+  .deck{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .deck:last-child{border:0} .deck .l{font-weight:600} .deck .adv{color:var(--muted);font-size:12px}
+  .empty{color:var(--muted);text-align:center;padding:20px;font-size:13px}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--panel2);
+    border:1px solid var(--line);border-radius:10px;padding:11px 18px;box-shadow:0 8px 30px #0008;
+    opacity:0;transition:.2s;pointer-events:none;max-width:80vw}
+  .toast.show{opacity:1} .toast.err{border-color:var(--accent)}
+  .hint{font-size:11px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1><b>◈</b> OPTCGSim <b>Studio</b></h1>
+  <div class="status" id="status"><span>chargement…</span></div>
+</header>
+
+<main>
+  <div class="grid">
+    <section>
+      <h2>Ajouter un thème / pack</h2>
+      <p class="sub">Site Themer, alt-arts, patch FR… — dépose un <b>.zip</b>, ou colle une URL
+        (GitHub / Dropbox) ou un chemin local.</p>
+      <div class="drop" id="drop">
+        <div>📦 Glisse un <b>.zip</b> ici</div>
+        <div class="hint">ou utilise le champ ci-dessous</div>
+      </div>
+      <div class="row">
+        <input id="src" placeholder="https://github.com/… , lien Dropbox, ou /chemin/local">
+      </div>
+      <div class="row">
+        <input id="src-name" placeholder="nom (optionnel)" style="flex:1">
+        <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px">
+          <input type="checkbox" id="follow" style="width:auto"> suivi</label>
+        <button onclick="addSource()">Analyser</button>
+      </div>
+      <div class="hint">« Analyser » normalise et rapporte — <b>rien n'est appliqué</b> au jeu
+        tant que tu ne cliques pas « Appliquer ».</div>
+    </section>
+
+    <section>
+      <h2>Importer une decklist</h2>
+      <p class="sub">Colle un export (tout format) ou une URL. Écrit le deck dans le sim et en base.</p>
+      <textarea id="deck-text" placeholder="1xOP01-060&#10;4x OP01-016&#10;…  (ou une URL sur la 1re ligne)"></textarea>
+      <div class="row">
+        <input id="deck-name" placeholder="nom du deck (optionnel)" style="flex:1">
+        <input id="deck-tags" placeholder="tags: ranked,op17" style="flex:1">
+        <button onclick="importDeck()">Importer</button>
+      </div>
+    </section>
+  </div>
+
+  <section>
+    <h2>Bibliothèque de packs</h2>
+    <p class="sub">Applique un pack (réversible à tout instant), ou vois combien de cartes de
+      <b>tes decks</b> il habille.</p>
+    <div id="packs"><div class="empty">Chargement…</div></div>
+  </section>
+
+  <section>
+    <h2>Mes decks</h2>
+    <div id="decks"><div class="empty">Aucun deck importé.</div></div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+async function api(path, opts){
+  const r = await fetch('/api'+path, opts);
+  const j = await r.json().catch(()=>({error:'réponse illisible'}));
+  if(!r.ok) throw new Error(j.error || ('HTTP '+r.status));
+  return j;
+}
+function toast(msg, err){
+  const t=$('#toast'); t.textContent=msg; t.className='toast show'+(err?' err':'');
+  setTimeout(()=>t.className='toast',3200);
+}
+
+async function loadStatus(){
+  const inv = await api('/inventory');
+  $('#status').innerHTML =
+    `<span><span class="dot ${inv.verified?'ok':'no'}"></span>${inv.os}${inv.verified?'':' (non vérifié)'}</span>`
+    +`<span><b>${inv.card_sets.length}</b> sets · <b>${inv.playmats.length}</b> tapis</span>`
+    +`<span><b>${inv.active_swaps}</b> swaps actifs</span>`;
+}
+
+async function loadPacks(){
+  const packs = await api('/packs');
+  const el = $('#packs');
+  if(!packs.length){ el.innerHTML='<div class="empty">Bibliothèque vide — ajoute un pack ci-dessus.</div>'; return; }
+  el.innerHTML = packs.map(p=>`
+    <div class="pack" data-name="${p.name}">
+      <div class="top">
+        <span class="name">${p.name}</span>
+        <span class="tag">${p.kind}</span>
+        ${p.applied?`<span class="tag applied">✓ appliqué (${p.applied})</span>`:''}
+        ${p.followed?`<span class="tag follow">suivi</span>`:''}
+      </div>
+      <div class="meta">${p.cards} cartes · ${p.present_in_install} cibles présentes dans le jeu
+        ${p.translation?' · traduction':''}${p.unclassified?` · ${p.unclassified} non classés`:''}</div>
+      <div class="actions">
+        <button class="mini" onclick="apply('${p.name}')">Appliquer</button>
+        <button class="mini ghost" onclick="coverage('${p.name}',this)">Couverture de mes decks</button>
+        <button class="mini ghost" onclick="remove('${p.name}')">Restaurer / retirer</button>
+      </div>
+      <div class="cov"></div>
+    </div>`).join('');
+}
+
+async function loadDecks(){
+  const decks = await api('/decks');
+  const el = $('#decks');
+  if(!decks.length){ el.innerHTML='<div class="empty">Aucun deck importé.</div>'; return; }
+  el.innerHTML = decks.map(d=>{
+    const n = Object.values(d.cards).reduce((a,b)=>a+b,0);
+    return `<div class="deck"><span class="l">${d.name}</span>
+      <span class="adv">${d.leader} · ${n} cartes${d.tags.length?' · '+d.tags.join(', '):''}</span></div>`;
+  }).join('');
+}
+
+async function addSource(){
+  const source=$('#src').value.trim(); if(!source) return toast('Indique une URL ou un chemin',1);
+  try{ const r=await api('/packs/add',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({source,name:$('#src-name').value.trim()||null,follow:$('#follow').checked})});
+    toast(`« ${r.name} » : ${r.summary}`); $('#src').value=''; loadPacks();
+  }catch(e){ toast(e.message,1); }
+}
+
+async function uploadZip(file){
+  toast('Analyse de '+file.name+'…');
+  try{ const r=await fetch('/api/packs/upload',{method:'POST',
+    headers:{'X-Filename':file.name},body:file});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error);
+    toast(`« ${j.name} » : ${j.summary}`); loadPacks();
+  }catch(e){ toast(e.message,1); }
+}
+
+async function apply(name){
+  try{ const r=await api(`/packs/${encodeURIComponent(name)}/apply`,{method:'POST',
+    headers:{'Content-Type':'application/json'},body:'{}'});
+    let m=`${r.applied.length} fichiers appliqués`;
+    if(r.translated) m+=' + traduction';
+    if(r.collisions.length) m+=` · ⚠ ${r.collisions.length} collision(s)`;
+    toast(m+'. Ferme le sim pour voir le résultat.'); loadStatus(); loadPacks();
+  }catch(e){ toast(e.message,1); }
+}
+
+async function remove(name){
+  try{ const r=await api(`/packs/${encodeURIComponent(name)}/remove`,{method:'POST'});
+    toast(`${r.restored} fichier(s) restauré(s) ; pack retiré.`); loadStatus(); loadPacks();
+  }catch(e){ toast(e.message,1); }
+}
+
+async function coverage(name, btn){
+  const box = btn.closest('.pack').querySelector('.cov');
+  if(box.classList.contains('show')){ box.classList.remove('show'); return; }
+  try{
+    const c = await api(`/packs/${encodeURIComponent(name)}/coverage`);
+    if(!c.decks.length){ box.innerHTML='<div class="empty">Importe un deck pour voir la couverture.</div>'; }
+    else box.innerHTML = c.decks.map(d=>`
+      <div class="covrow">
+        <div class="l"><b>${d.deck}</b><span>${d.covered}/${d.total} cartes · ${d.pct}%</span></div>
+        <div class="bar"><i style="width:${d.pct}%"></i></div>
+      </div>`).join('');
+    box.classList.add('show');
+  }catch(e){ toast(e.message,1); }
+}
+
+async function importDeck(){
+  const raw=$('#deck-text').value.trim(); if(!raw) return toast('Colle une decklist',1);
+  const isUrl=/^https?:\/\//.test(raw.split('\n')[0].trim());
+  const tags=$('#deck-tags').value.split(',').map(s=>s.trim()).filter(Boolean);
+  try{ const body=isUrl?{url:raw.split('\n')[0].trim()}:{text:raw};
+    body.name=$('#deck-name').value.trim()||null; body.tags=tags;
+    const r=await api('/decks/import',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)});
+    toast(`Deck « ${r.name} » (${r.leader}, ${r.total} cartes) importé.`);
+    $('#deck-text').value=''; loadDecks();
+  }catch(e){ toast(e.message,1); }
+}
+
+// drag & drop de zip
+const drop=$('#drop');
+;['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
+;['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
+drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];
+  if(f&&f.name.toLowerCase().endsWith('.zip')) uploadZip(f); else toast('Dépose un fichier .zip',1);});
+drop.addEventListener('click',()=>{const i=document.createElement('input');i.type='file';i.accept='.zip';
+  i.onchange=()=>i.files[0]&&uploadZip(i.files[0]);i.click();});
+
+loadStatus().catch(e=>$('#status').innerHTML=`<span style="color:var(--accent)">${e.message}</span>`);
+loadPacks(); loadDecks();
+</script>
+</body>
+</html>
