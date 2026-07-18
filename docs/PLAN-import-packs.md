@@ -163,17 +163,38 @@ Trecore ») au lieu d'un deck à la fois.
 
 Effort : ~1 session (nouveau module, mais s'appuie entièrement sur `importer.py` existant).
 
-## Chantier P7 — Import sélectif (économie disque)
+## Chantier P7 — Import sélectif (disque ET bande passante quand la source le permet)
 
-Deux demandes distinctes, toutes deux par extension de `normalize()`/`add_pack()` (pas de
-nouveau concept — symétrique au filtre `--only` déjà existant à l'application, mais
-appliqué ICI à la NORMALISATION pour que les fichiers exclus ne soient jamais écrits dans
-la bibliothèque, pas seulement ignorés à l'apply) :
+> **Reconnaissance faite (2026-07-18)** avant d'écarter le fetch sélectif fichier-par-fichier —
+> conclusion différente par source, avec preuves :
+>
+> | Source | Explorer la structure sans tout télécharger | Fetch sélectif par fichier |
+> |---|---|---|
+> | **GitHub** | ✅ Tree API (`git/trees/<branche>?recursive=1`), 1 requête, sans auth, avec tailles exactes | ✅ `raw.githubusercontent.com/<owner>/<repo>/<branche>/<chemin>` par fichier |
+> | **Dropbox** | ⚠️ Existe (`list_shared_link_folder_entries`, hrefs par fichier) mais endpoint interne | ❌ Refuse les appels scriptés (`403`, protection session/CSRF) sans navigateur automatisé complet |
+> | **Themer** | ❌ zip généré à la demande, pas de dossier à parcourir | ❌ non applicable |
+>
+> Test réel sur le repo FR : **2,2 Go (repo complet) → 39 Mo (un seul set OP01), soit 98 %
+> d'économie** — pas qu'un gain marginal. Le fetch sélectif GitHub devient donc la voie
+> PRINCIPALE de P7, pas une extension optionnelle « P7-bis ».
 
-1. **`only_categories`** : identique au `--only` d'`apply_mirror` (cards/playmats/
-   cardbacks/backgrounds/translation), mais au moment de `normalize()` → économie disque
-   réelle dans `~/.optcgsim-studio/packs/<nom>/`, pas seulement au jeu.
-2. **`only_cards`** : restreint aux ids d'un ensemble donné, calculé depuis :
+1. **`studio/assets/sourcefetch.py`** (nouveau) — abstraction « explorer puis récupérer » :
+   - `list_remote_files(source_url) -> list[{path, size}]` : implémenté pour GitHub
+     (Tree API) ; pour tout le reste (Dropbox, zip direct, dossier local), renvoie `None`
+     (signale « pas d'exploration à distance possible » — pas une erreur, un mode dégradé).
+   - `fetch_selected(source_url, paths) -> dossier local` : télécharge UNIQUEMENT les
+     chemins demandés (GitHub : un `urlopen` par fichier vers `raw.githubusercontent.com`,
+     en réutilisant `nettls.ssl_context()` déjà en place).
+2. **Intégration à `add_pack()`** : si `list_remote_files` renvoie une liste ET qu'un
+   filtre (`only_cards`/`only_categories`) est fourni → ne télécharger QUE les fichiers
+   dont le nom matche le filtre (classification par NOM DE FICHIER, sans avoir à
+   télécharger pour classifier — le nommage `<ID>[_OVERRIDE][_small].<ext>` suffit à
+   filtrer AVANT de fetcher). Sinon (Dropbox, pas de filtre) → comportement actuel
+   inchangé (zip complet, filtré à la normalisation — économie disque seulement, comme
+   dans la version précédente de ce plan).
+3. **`only_categories`** : cards/playmats/cardbacks/backgrounds/translation — au moment du
+   FETCH (GitHub) ou de la normalisation (autres sources).
+4. **`only_cards`** : restreint aux ids d'un ensemble donné, calculé depuis :
    a. **un ou plusieurs decks déjà en base** (« importer seulement pour ce(s) deck(s) ») —
       réutilise EXACTEMENT la logique déjà écrite pour `coverage()`
       (`set(deck["cards"]) | {deck["leader"]}`, union sur les decks cochés) ;
@@ -182,16 +203,18 @@ la bibliothèque, pas seulement ignorés à l'apply) :
       (`data/card_stats.json`, 2558 cartes, champ `card_type == "Leader"`). À vendoriser
       (même principe que le parser vendorisé dans rogue-lab) dans un petit module
       `studio/assets/cardmeta.py` exposant `is_leader(card_id) -> bool`.
-3. **Nuance à annoncer honnêtement dans l'UI** : ce filtre économise le DISQUE (taille
-   finale du pack en bibliothèque), pas nécessairement la BANDE PASSANTE — une source zip
-   monolithique (Dropbox/GitHub) doit être entièrement téléchargée avant de pouvoir la
-   filtrer. Un téléchargement sélectif fichier-par-fichier (API GitHub, liens Dropbox
-   individuels) serait un chantier bien plus lourd (P7-bis, hors périmètre initial, à
-   n'envisager que si la bande passante devient le vrai goulot).
-4. **Rapport** : nouvelle catégorie « hors périmètre (filtré par choix) », distincte de
+5. **UI** : quand `list_remote_files` réussit (source GitHub), afficher un aperçu AVANT
+   téléchargement (« 2942 fichiers, 2,2 Go — filtrer avant de télécharger ? ») avec
+   sélecteur deck(s)/leaders-only/catégories, et l'estimation de taille APRÈS filtre
+   (calculable puisque les tailles exactes sont connues sans rien télécharger). Pour les
+   sources sans exploration distante (Dropbox…), le filtre reste disponible mais agit
+   après téléchargement complet (disque seulement) — message honnête dans l'UI :
+   « cette source ne permet pas de filtrer avant téléchargement ».
+6. **Rapport** : nouvelle catégorie « hors périmètre (filtré par choix) », distincte de
    « non classé » — un exclu volontaire n'est pas une erreur de reconnaissance.
 
-Effort : ~½-1 session (extension ciblée + vendoring d'une seule table de métadonnées).
+Effort : ~1-1,5 session (le fetch sélectif GitHub ajoute plus de substance que prévu par
+rapport à la V1 « disque uniquement » du plan, mais le gain le justifie largement).
 
 ## Garde-fous inchangés
 
@@ -211,7 +234,7 @@ annoncée), jamais automatiquement en arrière-plan hors `packs update`.
 | P4 | frontend dropzone+préview+couverture | ~1-2 sessions | ✅ fait (+ jobs de fond) |
 | P5 | catalogue communautaire | ~½ session | à trancher (registre distant ou non) |
 | P6 | pack de decks (import groupé) | ~1 session | à trancher (qui écrit les manifestes) |
-| P7 | import sélectif (deck(s)/leaders only) | ~½-1 session | vendoring card_stats.json requis |
+| P7 | import sélectif (fetch ciblé GitHub + filtre disque partout) | ~1-1,5 session | vendoring card_stats.json requis |
 
 Décisions ouvertes historiques (résolues par la pratique) :
 - `Custom Cards`/`Extra Alts` (Dropbox) : conventions non vérifiées — le rapport
@@ -222,7 +245,9 @@ Décisions ouvertes pour P5-P7 (à trancher avec l'utilisateur avant d'implémen
   optionnel que l'utilisateur pointe explicitement (risque supply-chain à peser).
 - P6 : qui curate les manifestes `deckpack.json` au départ (toi manuellement, ou une
   convention à proposer aux mainteneurs de decklists communautaires) ?
-- P7 : l'économie visée est le DISQUE (résolu par le plan ci-dessus) ou aussi la BANDE
-  PASSANTE (nécessiterait un chantier bien plus lourd, P7-bis, non planifié ici) ?
+- P7 : résolu — fetch sélectif AVANT téléchargement pour GitHub (disque + bande passante,
+  98 % d'économie mesurée), filtre après téléchargement pour Dropbox/autres (disque
+  seulement, limitation confirmée : leur endpoint de listing refuse les appels scriptés
+  sans navigateur complet, 403 constaté).
 - Ordre de traitement suggéré : P7 (le plus mécanique, débloque immédiatement la
   couverture-de-decks déjà en place) → P5 (petit, haute valeur perçue) → P6 (le plus gros).
