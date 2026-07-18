@@ -142,6 +142,18 @@ def test_zip_slip_rejected(tmp_path):
         packlib.ingest(zpath, tmp_path / "work")
 
 
+def test_dropbox_style_root_slash_entry_not_rejected(tmp_path):
+    """Régression : les exports de dossier Dropbox incluent une entrée '/' en tête
+    (marqueur du dossier racine, sans contenu). `dest / '/'` vaut '/' en pathlib (opérande
+    absolu = base ignorée) -> ancien faux positif de zip-slip sur une archive légitime."""
+    zpath = tmp_path / "dropbox_export.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("/", "")                                    # entrée racine Dropbox
+        zf.writestr("Cards/OP01/OP01-001.png", b"fake-png-bytes")
+    out = packlib.ingest(zpath, tmp_path / "work")
+    assert (out / "Cards" / "OP01" / "OP01-001.png").read_bytes() == b"fake-png-bytes"
+
+
 def test_url_resolution():
     assert packlib._resolve_url("https://github.com/Sparklight-TL/OPTCGSim_FR").endswith(
         "/OPTCGSim_FR/zip/refs/heads/main")

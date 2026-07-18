@@ -80,10 +80,23 @@ class PackReport:
 
 # --------------------------------------------------------------------------- ingestion
 def _safe_extract(zf: zipfile.ZipFile, dest: Path) -> None:
-    """Extraction protégée contre le zip-slip (aucun membre hors de `dest`)."""
+    """Extraction protégée contre le zip-slip (aucun membre hors de `dest`).
+
+    Les exports Dropbox de dossier incluent une entrée `/` en tête (marqueur du dossier
+    racine lui-même, sans contenu) : `member.filename` vaut alors littéralement `/`.
+    `pathlib` traite un opérande ABSOLU dans `dest / nom` en IGNORANT `dest` (résultat = `/`,
+    la racine du système de fichiers) — un faux positif de zip-slip sur une archive
+    parfaitement légitime. On reproduit donc la même normalisation que
+    `zipfile.ZipFile.extractall()` applique déjà en interne (retrait des séparateurs de tête)
+    avant de vérifier le confinement ; une entrée qui devient vide après ce retrait est un
+    simple marqueur de dossier racine, sans contenu à valider.
+    """
     dest = dest.resolve()
     for member in zf.infolist():
-        target = (dest / member.filename).resolve()
+        name = member.filename.lstrip("/\\")
+        if not name:
+            continue      # marqueur du dossier racine (ex. entrée '/' des exports Dropbox)
+        target = (dest / name).resolve()
         if not (target == dest or str(target).startswith(str(dest) + "/")):
             raise PackError(f"Entrée d'archive hors dossier (zip-slip) : {member.filename}")
     zf.extractall(dest)
