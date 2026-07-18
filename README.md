@@ -93,6 +93,26 @@ LimitlessTCG) produit le format natif → `--clipboard`. L'URL directe tente une
 générique (bloc natif embarqué, sinon paires qty×id) et échoue proprement avec ce conseil —
 choix assumé : pas de scraper par site, leurs DOM changent, le format natif non.
 
+### Normalisation de packs hétérogènes (`studio packs add`)
+
+Tous les packs communautaires ne suivent pas le layout miroir. `packs add` ingère une source
+(dossier, `.zip`, URL GitHub ou Dropbox partagé — zip-slip refusé) et la **normalise** en
+pack canonique de bibliothèque, par classification fichier par fichier :
+
+- sous une racine miroir (`Cards/`, `Playmats/`…) → chemin préservé (Themer, Dropbox) ;
+- nom = id de carte, suffixes parasites retirés (`_OVERRIDE` du patch FR, `_alt`…) →
+  `Cards/<SET>/<ID>.png` ;
+- `.txt` en `Clé=Valeur` → traduction ; noms de dos/tapis/fond reconnus → catégorie ;
+- **tout le reste → rapporté « non classé » avec raison** (jamais de perte silencieuse).
+
+```bash
+studio packs add ~/theme.zip
+studio packs add https://github.com/Sparklight-TL/OPTCGSim_FR   # traduction + cartes FR
+```
+
+`add` normalise et rapporte, **n'applique rien** ; l'application (`packs apply`), les
+collisions entre packs et les sources suivies arrivent au chantier P2/P3.
+
 ## Pilier 3 — Synchronisation multi-appareils (`studio sync`)
 
 Offline-first : SQLite local par défaut, cloud en opt-in — **même protocole** (`SyncStore`),

@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+from .assets import packlib
 from .assets.manager import AssetError, AssetManager
 from .decks import importer
 from .gamepaths import locate
@@ -68,6 +69,25 @@ def cmd_assets_status(args) -> int:
 def cmd_assets_restore_all(args) -> int:
     n = AssetManager(_install(args)).restore_all()
     print(f"{n} fichiers restaurés à l'original.")
+    return 0
+
+
+# --------------------------------------------------------------------------- packs
+def cmd_packs_add(args) -> int:
+    inst = _install(args)
+    pack_dir, rep = packlib.add_pack(args.source, inst, name=args.name)
+    print(f"Pack « {rep.name} » normalisé -> {pack_dir}")
+    print(f"  {rep.summary()}")
+    if rep.variants:
+        print(f"  {len(rep.variants)} variante(s) (1re gardée) : "
+              f"{[v['target'] for v in rep.variants[:5]]}")
+    if rep.unclassified:
+        print(f"  {len(rep.unclassified)} non classé(s) :")
+        for u in rep.unclassified[:10]:
+            print(f"    - {u['path']} : {u['reason']}")
+        if len(rep.unclassified) > 10:
+            print(f"    … et {len(rep.unclassified) - 10} de plus")
+    print("Rien n'a été appliqué au jeu. (application : chantier P2 `studio packs apply`)")
     return 0
 
 
@@ -146,6 +166,13 @@ def build_parser() -> argparse.ArgumentParser:
     am.set_defaults(func=cmd_assets_apply_mirror)
     sa.add_parser("status").set_defaults(func=cmd_assets_status)
     sa.add_parser("restore-all").set_defaults(func=cmd_assets_restore_all)
+
+    pp = sub.add_parser("packs", help="bibliothèque de packs d'assets (normalisation)")
+    sp = pp.add_subparsers(dest="sub", required=True)
+    pad = sp.add_parser("add", help="normaliser une source (dossier/zip/URL) en pack")
+    pad.add_argument("source", help="dossier, .zip, ou URL (GitHub / Dropbox partagé)")
+    pad.add_argument("--name", default=None, help="nom du pack en bibliothèque")
+    pad.set_defaults(func=cmd_packs_add)
 
     pd = sub.add_parser("decks", help="importation et gestion de decklists")
     sd = pd.add_subparsers(dest="sub", required=True)
