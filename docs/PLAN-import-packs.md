@@ -177,14 +177,40 @@ Effort : ~1 session (nouveau module, mais s'appuie entièrement sur `importer.py
 > Test réel sur le repo FR : **2,2 Go (repo complet) → 39 Mo (un seul set OP01), soit 98 %
 > d'économie** — pas qu'un gain marginal. Le fetch sélectif GitHub devient donc la voie
 > PRINCIPALE de P7, pas une extension optionnelle « P7-bis ».
+>
+> **Décision utilisateur (2026-07-18)** : héberger son PROPRE pack curaté (alt-arts,
+> traductions rassemblées) sur un dépôt GitHub **privé**, pas public — les images
+> concernées (art de cartes, IP One Piece/Bandai) ne lui appartiennent pas ; un dépôt
+> public serait de la redistribution publique de contenu protégé (risque DMCA constaté sur
+> des projets communautaires similaires d'autres TCG), alors qu'un dépôt privé est bien
+> plus proche d'une sauvegarde personnelle. Conséquence technique : P7 doit supporter
+> l'authentification GitHub (token), pas seulement les dépôts publics anonymes.
 
 1. **`studio/assets/sourcefetch.py`** (nouveau) — abstraction « explorer puis récupérer » :
-   - `list_remote_files(source_url) -> list[{path, size}]` : implémenté pour GitHub
-     (Tree API) ; pour tout le reste (Dropbox, zip direct, dossier local), renvoie `None`
-     (signale « pas d'exploration à distance possible » — pas une erreur, un mode dégradé).
-   - `fetch_selected(source_url, paths) -> dossier local` : télécharge UNIQUEMENT les
-     chemins demandés (GitHub : un `urlopen` par fichier vers `raw.githubusercontent.com`,
-     en réutilisant `nettls.ssl_context()` déjà en place).
+   - `list_remote_files(source_url, token=None) -> list[{path, size}]` : implémenté pour
+     GitHub (Tree API) ; pour tout le reste (Dropbox, zip direct, dossier local), renvoie
+     `None` (signale « pas d'exploration à distance possible » — pas une erreur, un mode
+     dégradé).
+   - `fetch_selected(source_url, paths, token=None) -> dossier local` : télécharge
+     UNIQUEMENT les chemins demandés, en réutilisant `nettls.ssl_context()` déjà en place.
+
+   **Dépôts privés (token)** : `token` = un Personal Access Token GitHub (scope `repo`,
+   généré par l'utilisateur dans ses paramètres GitHub — jamais demandé/stocké par un tiers).
+   - Tree API : `Authorization: Bearer <token>` sur `api.github.com/repos/.../git/trees/...`
+     — fonctionne pour un dépôt privé exactement comme pour un public, juste avec l'en-tête
+     en plus (documenté, sans ambiguïté).
+   - Contenu par fichier : l'API Contents (`api.github.com/repos/.../contents/<chemin>`,
+     même en-tête `Authorization`) renvoie le contenu en base64 — **chemin confirmé** par
+     la doc GitHub pour les dépôts privés. `raw.githubusercontent.com` avec un token en
+     en-tête fonctionne aussi en pratique sur du public/privé selon la doc GitHub, mais
+     **à vérifier empiriquement** une fois qu'on implémente avec un vrai dépôt privé et un
+     vrai token (ne pas se fier uniquement à la doc pour ce point précis) ; l'API Contents
+     reste le repli sûr si jamais `raw.` se comporte différemment que prévu pour le privé.
+   - **Stockage du token** : fichier de config local (`~/.optcgsim-studio/config.json` ou
+     variable d'environnement `OPTCG_STUDIO_GITHUB_TOKEN`) — jamais commité, jamais loggé,
+     jamais inclus dans un rapport de job ni un message d'erreur (traiter comme un secret,
+     au même titre qu'un mot de passe : redaction systématique si un token apparaît dans un
+     message d'exception avant de le faire remonter à l'UI/aux logs).
 2. **Intégration à `add_pack()`** : si `list_remote_files` renvoie une liste ET qu'un
    filtre (`only_cards`/`only_categories`) est fourni → ne télécharger QUE les fichiers
    dont le nom matche le filtre (classification par NOM DE FICHIER, sans avoir à
@@ -212,9 +238,17 @@ Effort : ~1 session (nouveau module, mais s'appuie entièrement sur `importer.py
    « cette source ne permet pas de filtrer avant téléchargement ».
 6. **Rapport** : nouvelle catégorie « hors périmètre (filtré par choix) », distincte de
    « non classé » — un exclu volontaire n'est pas une erreur de reconnaissance.
+7. **Configuration du token** : `studio config set-github-token <token>` (CLI, écrit dans
+   le fichier de config local) + champ dédié dans l'UI (type `password`, jamais affiché en
+   clair une fois saisi, jamais renvoyé tel quel par l'API — un `GET` de configuration ne
+   renvoie qu'un booléen « configuré : oui/non », jamais la valeur). Sans token configuré,
+   `list_remote_files`/`fetch_selected` fonctionnent quand même pour un dépôt PUBLIC
+   (comme mesuré) ; un dépôt privé sans token renvoie une erreur claire (« dépôt privé ou
+   introuvable — configure un token GitHub ») plutôt qu'un 404 opaque.
 
 Effort : ~1-1,5 session (le fetch sélectif GitHub ajoute plus de substance que prévu par
-rapport à la V1 « disque uniquement » du plan, mais le gain le justifie largement).
+rapport à la V1 « disque uniquement » du plan ; le support du token est un ajout mineur au
+même chantier, pas une charge supplémentaire significative).
 
 ## Garde-fous inchangés
 
