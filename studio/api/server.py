@@ -29,8 +29,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from ..assets import packlib
+from ..assets import cardmeta, packlib, sourcefetch
 from ..assets.manager import AssetError, AssetManager
+from ..config import Config
 from ..decks import importer
 from ..gamepaths import GameInstall, locate
 from ..storage.local import DEFAULT_DB, LocalStore
@@ -50,12 +51,16 @@ class StudioService:
     """Logique métier de l'API — indépendante du transport HTTP (testable directement)."""
 
     def __init__(self, install: GameInstall, db_path: str = str(DEFAULT_DB),
-                 lib_dir: Path = packlib.DEFAULT_LIB):
+                 lib_dir: Path = packlib.DEFAULT_LIB, state_dir: Path | None = None):
         self.install = install
         self.db_path = db_path
         self.lib_dir = Path(lib_dir)
-        self.mgr = AssetManager(install)
+        # state_dir (backups + manifeste du manager, config) : paramétrable pour que les tests
+        # n'écrivent JAMAIS dans le dossier réel ~/.optcgsim-studio de l'utilisateur.
+        self.mgr = (AssetManager(install, state_dir=state_dir) if state_dir
+                    else AssetManager(install))
         self.jobs = JobManager()
+        self.config = Config(state_dir) if state_dir else Config()
 
     def _store(self) -> LocalStore:
         return LocalStore(Path(self.db_path))
@@ -124,17 +129,80 @@ class StudioService:
     # fichiers). Exécutés dans un THREAD SERVEUR indépendant de la requête HTTP : fermer
     # l'onglet ou recharger la page n'interrompt RIEN, l'opération va à son terme — l'UI
     # n'a qu'à revenir consulter `job_status` pour retrouver son état.
+    # ------------------------------------------------------------ import sélectif (P7)
+    def _resolve_filter(self, only_categories: list[str] | None,
+                        for_decks: list[str] | None,
+                        leaders_only: bool) -> tuple[set[str] | None, set[str] | None]:
+        """Traduit les options UI/CLI en (only_categories, only_cards) pour packlib.
+
+        - leaders_only : restreint aux cartes Leader (only_categories += cards).
+        - for_decks    : restreint aux cartes de ces decks (leader + cartes), union.
+        Les deux peuvent se combiner (union des ids). only_categories explicite est respecté."""
+        cats = set(only_categories) if only_categories else None
+        cards: set[str] | None = None
+        if leaders_only:
+            cats = (cats or set()) | {"cards"}
+            cards = set(cardmeta.leader_ids())
+        if for_decks:
+            with self._store() as store:
+                by_name = {d["name"]: d for d in store.list("decks")}
+            ids: set[str] = set()
+            for nm in for_decks:
+                d = by_name.get(nm)
+                if d:
+                    ids |= set(d["cards"]) | {d["leader"]}
+            cards = (cards or set()) | ids
+        return cats, cards
+
+    def preview(self, source: str) -> dict:
+        """Explore une source SANS télécharger le contenu (GitHub) : nombre de fichiers,
+        taille totale, et taille estimée par filtre (leaders / catégorie cards). Renvoie
+        {explorable: False} pour les sources non explorables (Dropbox, zip, dossier)."""
+        token = self.config.github_token()
+        try:
+            remote = sourcefetch.list_remote_files(source, token=token)
+        except sourcefetch.FetchError as e:
+            return {"explorable": False, "reason": str(e)}
+        if remote is None:
+            return {"explorable": False,
+                    "reason": "Source non explorable à distance — le filtre agira après "
+                              "téléchargement (économie disque seulement)."}
+        total = sum(f.size for f in remote)
+        leaders = set(cardmeta.leader_ids())
+        by = {"total": total,
+              "cards": sum(f.size for f in remote
+                           if packlib.keep_rel(f.path, {"cards"}, None)),
+              "leaders": sum(f.size for f in remote
+                             if packlib.keep_rel(f.path, {"cards"}, leaders))}
+        return {"explorable": True, "files": len(remote), "sizes": by}
+
     def add_source(self, source: str, name: str | None = None, follow: bool = False,
-                   on_progress=None) -> dict:
+                   on_progress=None, only_categories: list[str] | None = None,
+                   for_decks: list[str] | None = None, leaders_only: bool = False) -> dict:
+        cats, cards = self._resolve_filter(only_categories, for_decks, leaders_only)
         pack_dir, rep = packlib.add_pack(source, self.install, name=name,
                                          lib_dir=self.lib_dir,
-                                         on_progress=on_progress or (lambda *a: None))
+                                         on_progress=on_progress or (lambda *a: None),
+                                         only_categories=cats, only_cards=cards,
+                                         token=self.config.github_token())
         return self._register(pack_dir, rep, follow)
 
-    def start_add_job(self, source: str, name: str | None = None,
-                      follow: bool = False) -> str:
+    def start_add_job(self, source: str, name: str | None = None, follow: bool = False,
+                      only_categories: list[str] | None = None,
+                      for_decks: list[str] | None = None,
+                      leaders_only: bool = False) -> str:
         return self.jobs.start(
-            "add", lambda reporter: self.add_source(source, name, follow, reporter))
+            "add", lambda reporter: self.add_source(
+                source, name, follow, reporter, only_categories, for_decks, leaders_only))
+
+    # ------------------------------------------------------------ config token (secret)
+    def get_config(self) -> dict:
+        # ne renvoie JAMAIS le token en clair — seulement s'il est configuré.
+        return {"github_token_set": self.config.has_github_token()}
+
+    def set_github_token(self, token: str | None) -> dict:
+        self.config.set_github_token(token)
+        return {"github_token_set": self.config.has_github_token()}
 
     def add_zip_bytes(self, data: bytes, name: str, on_progress=None) -> dict:
         tmp = Path(tempfile.mkdtemp(prefix="studio-up-"))
@@ -257,6 +325,8 @@ def make_handler(svc: StudioService):
                     return self._send(200, svc.packs())
                 if path == "/api/decks":
                     return self._send(200, svc.decks())
+                if path == "/api/config":
+                    return self._send(200, svc.get_config())
                 m = re.match(r"^/api/packs/([^/]+)/coverage$", path)
                 if m:
                     return self._send(200, svc.coverage(_dec(m.group(1))))
@@ -276,9 +346,18 @@ def make_handler(svc: StudioService):
                 # Opérations longues (téléchargement, normalisation, application) : lancées
                 # en tâche de fond, la requête renvoie IMMÉDIATEMENT un job_id à interroger
                 # via GET /api/jobs/<id> — fermer l'onglet n'interrompt jamais le travail.
+                if path == "/api/config":
+                    b = self._body_json()
+                    return self._send(200, svc.set_github_token(b.get("github_token")))
+                if path == "/api/packs/preview":
+                    b = self._body_json()
+                    return self._send(200, svc.preview(b["source"]))
                 if path == "/api/packs/add":
                     b = self._body_json()
-                    jid = svc.start_add_job(b["source"], b.get("name"), b.get("follow", False))
+                    jid = svc.start_add_job(
+                        b["source"], b.get("name"), b.get("follow", False),
+                        only_categories=b.get("only_categories"),
+                        for_decks=b.get("for_decks"), leaders_only=b.get("leaders_only", False))
                     return self._send(202, {"job_id": jid})
                 if path == "/api/packs/upload":
                     n = int(self.headers.get("Content-Length", 0))

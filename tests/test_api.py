@@ -36,7 +36,7 @@ def svc(tmp_path):
                        persistent=tmp_path / "persist", os_name="test", verified=True)
     (tmp_path / "persist").mkdir()
     return StudioService(inst, db_path=str(tmp_path / "studio.db"),
-                         lib_dir=tmp_path / "lib")
+                         lib_dir=tmp_path / "lib", state_dir=tmp_path / "state")
 
 
 def _pack(root: Path):
@@ -107,6 +107,60 @@ def _post(base, path, body, headers=None):
 def test_http_serves_index(server):
     with urllib.request.urlopen(server + "/") as r:
         assert r.status == 200 and b"OPTCGSim" in r.read()
+
+
+# ------------------------------------------------------------------ P7 : config token (secret)
+def test_config_token_never_returned_in_clear(server, svc, monkeypatch, tmp_path):
+    from studio.config import Config
+    monkeypatch.setattr(svc, "config", Config(state_dir=tmp_path / "cfg"))
+    code, r = _get(server, "/api/config")
+    assert code == 200 and r == {"github_token_set": False}
+    code, r = _post(server, "/api/config", {"github_token": "ghp_secret"})
+    assert r == {"github_token_set": True}          # booléen, JAMAIS la valeur
+    code, r = _get(server, "/api/config")
+    assert r == {"github_token_set": True}
+    assert "ghp_secret" not in json.dumps(r)
+
+
+# ------------------------------------------------------------------ P7 : preview
+def test_preview_non_explorable_source(server, tmp_path):
+    code, r = _post(server, "/api/packs/preview", {"source": str(tmp_path)})
+    assert code == 200 and r["explorable"] is False
+
+
+def test_preview_github_sizes(server, svc, monkeypatch):
+    from studio.assets import sourcefetch
+    remote = [sourcefetch.RemoteFile("Cards/OP01/OP01-001.png", 1000),   # leader
+              sourcefetch.RemoteFile("Cards/OP01/OP01-016.png", 1000),   # perso
+              sourcefetch.RemoteFile("Playmats/Blue.png", 5000)]
+    monkeypatch.setattr(sourcefetch, "list_remote_files", lambda url, token=None: remote)
+    code, r = _post(server, "/api/packs/preview", {"source": "https://github.com/o/r"})
+    assert r["explorable"] is True and r["files"] == 3
+    assert r["sizes"]["total"] == 7000
+    assert r["sizes"]["cards"] == 2000       # les 2 cartes, pas le playmat
+    assert r["sizes"]["leaders"] == 1000     # le seul leader
+
+
+# ------------------------------------------------------------------ P7 : add filtré (job)
+def test_add_with_leaders_only_filter(server, svc, tmp_path, monkeypatch):
+    from studio.assets import sourcefetch
+    remote = [sourcefetch.RemoteFile("Cards/OP01/OP01-001.png", 1),   # leader
+              sourcefetch.RemoteFile("Cards/OP01/OP01-016.png", 1)]   # perso
+    monkeypatch.setattr(sourcefetch, "list_remote_files", lambda url, token=None: remote)
+    fetched = {}
+    def fake_fetch(url, paths, dest, token=None, on_progress=None):
+        fetched["paths"] = list(paths)
+        for p in paths:
+            make_png(Path(dest) / p)
+        return Path(dest)
+    monkeypatch.setattr(sourcefetch, "fetch_selected", fake_fetch)
+    code, r = _post(server, "/api/packs/add",
+                    {"source": "https://github.com/o/r", "name": "L", "leaders_only": True})
+    assert code == 202
+    st = _wait_job(server, r["job_id"])
+    assert st["status"] == "done"
+    assert fetched["paths"] == ["Cards/OP01/OP01-001.png"]      # SEUL le leader téléchargé
+    assert st["result"]["cards"] == ["OP01-001"]
 
 
 def test_http_inventory(server):

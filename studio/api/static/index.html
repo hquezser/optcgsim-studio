@@ -106,8 +106,17 @@
           <input type="checkbox" id="follow" style="width:auto"> suivi</label>
         <button id="analyser-btn" onclick="addSource()">Analyser</button>
       </div>
+      <div class="row" style="flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted)">
+        <span>Import sélectif :</span>
+        <label style="display:flex;align-items:center;gap:5px">
+          <input type="checkbox" id="f-leaders" style="width:auto"> leaders uniquement</label>
+        <label style="display:flex;align-items:center;gap:5px">
+          <input type="checkbox" id="f-cards" style="width:auto"> cartes uniquement (pas de tapis/fonds)</label>
+      </div>
+      <div class="hint" id="preview-hint"></div>
       <div class="hint">« Analyser » normalise et rapporte — <b>rien n'est appliqué</b> au jeu
-        tant que tu ne cliques pas « Appliquer ».</div>
+        tant que tu ne cliques pas « Appliquer ». L'import sélectif sur une source <b>GitHub</b>
+        ne télécharge que le nécessaire (dépôt privé : configure un token plus bas).</div>
     </section>
 
     <section>
@@ -132,6 +141,18 @@
   <section>
     <h2>Mes decks</h2>
     <div id="decks"><div class="empty">Aucun deck importé.</div></div>
+  </section>
+
+  <section>
+    <h2>Réglages — token GitHub (dépôts privés)</h2>
+    <p class="sub">Pour explorer/importer sélectivement un dépôt GitHub <b>privé</b> (ton pack
+      perso), colle un Personal Access Token (scope <code>repo</code>). Stocké localement,
+      jamais affiché ni envoyé ailleurs. Inutile pour un dépôt public.</p>
+    <div class="row">
+      <input id="gh-token" type="password" placeholder="ghp_… (laisser vide pour effacer)" style="flex:1">
+      <button class="ghost" onclick="saveToken()">Enregistrer</button>
+    </div>
+    <div class="hint" id="token-state"></div>
   </section>
 </main>
 
@@ -248,19 +269,62 @@ function resumeJobs(){
 }
 
 // ------------------------------------------------------------------ actions
+function currentFilter(){
+  const cats = $('#f-cards').checked ? ['cards'] : null;
+  return {only_categories: cats, leaders_only: $('#f-leaders').checked};
+}
+const fmtMo = b => (b/1048576).toFixed(b>10485760?0:1)+' Mo';
+
+// aperçu de taille (source GitHub) : recalcule ce qui SERAIT téléchargé selon le filtre
+async function refreshPreview(){
+  const source=$('#src').value.trim();
+  const hint=$('#preview-hint');
+  if(!/github\.com/.test(source)){ hint.textContent=''; return; }
+  try{
+    const p = await api('/packs/preview',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source})});
+    if(!p.explorable){ hint.textContent='ℹ '+(p.reason||'source non explorable'); return; }
+    const s=p.sizes, f=currentFilter();
+    const sel = f.leaders_only ? s.leaders : (f.only_categories ? s.cards : s.total);
+    hint.innerHTML = `📦 ${p.files} fichiers, ${fmtMo(s.total)} au total — `
+      + `<b>${fmtMo(sel)}</b> avec le filtre actuel `
+      + `(leaders ${fmtMo(s.leaders)} · cartes ${fmtMo(s.cards)})`;
+  }catch(e){ hint.textContent='ℹ '+e.message; }
+}
+
 async function addSource(){
   const source=$('#src').value.trim(); if(!source) return toast('Indique une URL ou un chemin',1);
   const name = $('#src-name').value.trim()||null;
   const btn = $('#analyser-btn'); btn.disabled = true;
   try{
     const r = await api('/packs/add',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({source, name, follow:$('#follow').checked})});
+      body:JSON.stringify({source, name, follow:$('#follow').checked, ...currentFilter()})});
     const result = await pollJob(r.job_id, `Analyse « ${name || source} »`);
-    toast(`« ${result.name} » : ${result.summary}`);
-    $('#src').value=''; $('#src-name').value='';
+    let msg = `« ${result.name} » : ${result.summary}`;
+    toast(msg);
+    $('#src').value=''; $('#src-name').value=''; $('#preview-hint').textContent='';
     loadPacks();
   }catch(e){ toast(e.message,1); }
   finally{ btn.disabled = false; }
+}
+
+async function saveToken(){
+  const tok = $('#gh-token').value;
+  try{
+    const r = await api('/config',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({github_token: tok || null})});
+    $('#gh-token').value='';
+    toast(r.github_token_set ? 'Token GitHub enregistré.' : 'Token effacé.');
+    loadTokenState();
+  }catch(e){ toast(e.message,1); }
+}
+
+async function loadTokenState(){
+  try{ const c = await api('/config');
+    $('#token-state').textContent = c.github_token_set
+      ? '✓ un token est configuré (dépôts privés accessibles).'
+      : 'Aucun token configuré (dépôts publics uniquement).';
+  }catch{}
 }
 
 async function uploadZip(file){
@@ -332,8 +396,15 @@ drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];
 drop.addEventListener('click',()=>{const i=document.createElement('input');i.type='file';i.accept='.zip';
   i.onchange=()=>i.files[0]&&uploadZip(i.files[0]);i.click();});
 
+// aperçu de taille : sur changement de source (débounce) et de filtre
+let previewTimer;
+$('#src').addEventListener('input', ()=>{clearTimeout(previewTimer);
+  previewTimer=setTimeout(refreshPreview, 500);});
+$('#f-leaders').addEventListener('change', refreshPreview);
+$('#f-cards').addEventListener('change', refreshPreview);
+
 loadStatus().catch(e=>$('#status').innerHTML=`<span style="color:var(--accent)">${e.message}</span>`);
-loadPacks(); loadDecks();
+loadPacks(); loadDecks(); loadTokenState();
 resumeJobs();   // reprend l'affichage des jobs encore en cours après un rechargement de page
 </script>
 </body>

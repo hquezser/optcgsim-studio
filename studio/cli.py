@@ -117,10 +117,45 @@ def _find_pack(store, name: str) -> dict | None:
     return next((p for p in store.list("cosmetic_packs") if p["name"] == name), None)
 
 
+def _resolve_cli_filter(args):
+    """(only_categories, only_cards) depuis --only / --leaders-only / --for-deck."""
+    from .assets import cardmeta
+    cats = set(args.only.split(",")) if getattr(args, "only", None) else None
+    cards = None
+    if getattr(args, "leaders_only", False):
+        cats = (cats or set()) | {"cards"}
+        cards = set(cardmeta.leader_ids())
+    for_decks = getattr(args, "for_deck", None)
+    if for_decks:
+        with LocalStore(Path(args.db)) as store:
+            by = {d["name"]: d for d in store.list("decks")}
+        ids = set()
+        for nm in for_decks:
+            d = by.get(nm)
+            if d:
+                ids |= set(d["cards"]) | {d["leader"]}
+            else:
+                print(f"  ⚠ deck inconnu ignoré : {nm}")
+        cards = (cards or set()) | ids
+    return cats, cards
+
+
+def cmd_config_set_token(args) -> int:
+    from .config import Config
+    Config().set_github_token(args.token or None)
+    state = "configuré" if Config().has_github_token() else "effacé"
+    print(f"Token GitHub {state}. (jamais affiché ni loggé ; utilisé pour les dépôts privés)")
+    return 0
+
+
 def cmd_packs_add(args) -> int:
+    from .config import Config
     inst = _install(args)
+    cats, cards = _resolve_cli_filter(args)
     pack_dir, rep = packlib.add_pack(args.source, inst, name=args.name, lib_dir=_PACK_LIB,
-                                     on_progress=_console_progress)
+                                     on_progress=_console_progress,
+                                     only_categories=cats, only_cards=cards,
+                                     token=Config().github_token())
     manifest = json.loads((pack_dir / "manifest.json").read_text())
     if args.follow:
         manifest["followed"] = True              # source re-téléchargeable via `packs update`
@@ -143,6 +178,8 @@ def cmd_packs_add(args) -> int:
             print(f"    - {u['path']} : {u['reason']}")
         if len(rep.unclassified) > 10:
             print(f"    … et {len(rep.unclassified) - 10} de plus")
+    if rep.filtered:
+        print(f"  {len(rep.filtered)} fichier(s) hors périmètre (filtrés par choix, non importés)")
     print(f"Enregistré en bibliothèque. `studio packs apply {rep.name} --dry-run` "
           f"pour prévisualiser.")
     return 0
@@ -409,6 +446,13 @@ def build_parser() -> argparse.ArgumentParser:
     pad.add_argument("--name", default=None, help="nom du pack en bibliothèque")
     pad.add_argument("--follow", action="store_true",
                      help="source suivie : re-téléchargeable via `packs update`")
+    pad.add_argument("--only", default=None, metavar="cards,playmats,...",
+                     help="import sélectif : catégories à garder (économie disque)")
+    pad.add_argument("--leaders-only", action="store_true",
+                     help="import sélectif : uniquement les cartes Leader")
+    pad.add_argument("--for-deck", action="append", metavar="NOM",
+                     help="import sélectif : uniquement les cartes de ce deck (répétable). "
+                          "Sur une source GitHub, ne télécharge QUE le nécessaire.")
     pad.set_defaults(func=cmd_packs_add)
     pup = sp.add_parser("update", help="re-télécharger les packs suivis (delta + ré-apply)")
     pup.add_argument("name", nargs="?", default=None, help="un pack précis (sinon tous)")
@@ -450,6 +494,13 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--url", default=None)
     ps.add_argument("--token", default=None)
     ps.set_defaults(func=cmd_sync)
+
+    pc = sub.add_parser("config", help="configuration locale (token GitHub…)")
+    sc = pc.add_subparsers(dest="sub", required=True)
+    sct = sc.add_parser("set-github-token",
+                        help="token pour les dépôts privés (import sélectif) ; vide = effacer")
+    sct.add_argument("token", nargs="?", default=None)
+    sct.set_defaults(func=cmd_config_set_token)
     return p
 
 
