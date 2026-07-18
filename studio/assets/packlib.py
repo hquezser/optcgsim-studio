@@ -27,12 +27,14 @@ import hashlib
 import json
 import re
 import shutil
+import ssl
 import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..gamepaths import GameInstall
+from ..nettls import CERT_FIX_HINT, ssl_context
 
 # Gabarit d'id partagé avec le reste de l'écosystème.
 CARD_ID = r"(?:P-[A-Z0-9]+|[A-Z]{2,4}\d{2}-\d{3})"
@@ -88,10 +90,29 @@ def _safe_extract(zf: zipfile.ZipFile, dest: Path) -> None:
 
 
 def _download(url: str, dest_zip: Path, timeout: float = 60.0) -> None:
+    """Télécharge en streaming (1 Mo/bloc). Les dossiers communautaires complets peuvent
+    peser plusieurs centaines de Mo (ex. « Alt Cards Jon » ≈ 614 Mo) : progression affichée
+    au-delà de 20 Mo pour que ça ne ressemble pas à un blocage."""
     req = urllib.request.Request(url, headers={"User-Agent": "optcgsim-studio/0.1"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (schéma vérifié)
-        with dest_zip.open("wb") as out:
-            shutil.copyfileobj(resp, out, length=1 << 20)       # streaming 1 Mo
+    try:
+        with urllib.request.urlopen(  # noqa: S310 (schéma vérifié)
+                req, timeout=timeout, context=ssl_context()) as resp:
+            total = int(resp.headers.get("Content-Length") or 0)
+            show_progress = total > 20 * 1024 * 1024
+            done = 0
+            with dest_zip.open("wb") as out:
+                while chunk := resp.read(1 << 20):
+                    out.write(chunk)
+                    done += len(chunk)
+                    if show_progress:
+                        pct = 100 * done / total if total else 0
+                        print(f"\r  téléchargement… {done // (1<<20)} Mo"
+                              f"{f'/{total // (1<<20)} Mo ({pct:.0f}%)' if total else ''}",
+                              end="", flush=True)
+            if show_progress:
+                print()
+    except ssl.SSLCertVerificationError as e:
+        raise PackError(CERT_FIX_HINT) from e
 
 
 def _resolve_url(url: str) -> str:

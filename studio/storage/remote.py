@@ -21,9 +21,12 @@ tout backend doit respecter, et sert aux tests de convergence multi-appareils.
 from __future__ import annotations
 
 import json
+import ssl
 import time
 import urllib.request
 from typing import Iterable
+
+from ..nettls import CERT_FIX_HINT, ssl_context
 
 
 class FakeRemote:
@@ -80,12 +83,15 @@ class RestRemote:
                      "Content-Type": "application/json"},
             data=json.dumps(body).encode() if body is not None else None)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(
+                    req, timeout=self.timeout, context=ssl_context()) as resp:
                 return json.loads(resp.read().decode() or "null")
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 return None
             raise
+        except ssl.SSLCertVerificationError as e:
+            raise RuntimeError(CERT_FIX_HINT) from e
 
     def list(self, entity: str, include_deleted: bool = False) -> list[dict]:
         rows = self._req("GET", f"/v1/{entity}?since=0") or []

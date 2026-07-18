@@ -24,11 +24,14 @@ lire. Pas de scraper par site : leurs DOM changent, le format natif non.
 from __future__ import annotations
 
 import re
+import ssl
 import subprocess
 import sys
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from ..nettls import CERT_FIX_HINT, ssl_context
 
 # Même gabarit d'id que le reste de l'écosystème (validé sur des années de logs).
 CARD_ID = r"(?:P-[A-Z0-9]+|[A-Z]{2,4}\d{2}-\d{3})"
@@ -197,8 +200,12 @@ def fetch_url(url: str, timeout: float = 10.0) -> str:
     if not url.lower().startswith(("http://", "https://")):
         raise ImportError_(f"URL invalide : {url}")
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (schéma vérifié)
-        return resp.read().decode("utf-8", errors="ignore")
+    try:
+        with urllib.request.urlopen(  # noqa: S310 (schéma vérifié)
+                req, timeout=timeout, context=ssl_context()) as resp:
+            return resp.read().decode("utf-8", errors="ignore")
+    except ssl.SSLCertVerificationError as e:
+        raise ImportError_(CERT_FIX_HINT) from e
 
 
 def parse_html(html: str, name: str | None = None,
