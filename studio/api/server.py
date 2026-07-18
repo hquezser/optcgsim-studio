@@ -34,6 +34,7 @@ from ..assets.manager import AssetError, AssetManager
 from ..decks import importer
 from ..gamepaths import GameInstall, locate
 from ..storage.local import DEFAULT_DB, LocalStore
+from .jobs import JobManager, ProgressReporter
 
 STATIC = Path(__file__).parent / "static"
 
@@ -54,6 +55,7 @@ class StudioService:
         self.db_path = db_path
         self.lib_dir = Path(lib_dir)
         self.mgr = AssetManager(install)
+        self.jobs = JobManager()
 
     def _store(self) -> LocalStore:
         return LocalStore(Path(self.db_path))
@@ -116,19 +118,41 @@ class StudioService:
         rows.sort(key=lambda r: r["pct"], reverse=True)
         return {"pack": name, "cards_in_pack": len(pack_cards), "decks": rows}
 
-    # ------------------------------------------------------------ écriture
-    def add_source(self, source: str, name: str | None = None,
-                   follow: bool = False) -> dict:
+    # ------------------------------------------------------------ écriture (jobs de fond)
+    # Le téléchargement + la normalisation d'un pack, ou l'application au jeu, peuvent
+    # prendre plusieurs minutes (dossiers communautaires de centaines de Mo, milliers de
+    # fichiers). Exécutés dans un THREAD SERVEUR indépendant de la requête HTTP : fermer
+    # l'onglet ou recharger la page n'interrompt RIEN, l'opération va à son terme — l'UI
+    # n'a qu'à revenir consulter `job_status` pour retrouver son état.
+    def add_source(self, source: str, name: str | None = None, follow: bool = False,
+                   on_progress=None) -> dict:
         pack_dir, rep = packlib.add_pack(source, self.install, name=name,
-                                         lib_dir=self.lib_dir)
+                                         lib_dir=self.lib_dir,
+                                         on_progress=on_progress or (lambda *a: None))
         return self._register(pack_dir, rep, follow)
 
-    def add_zip_bytes(self, data: bytes, name: str) -> dict:
+    def start_add_job(self, source: str, name: str | None = None,
+                      follow: bool = False) -> str:
+        return self.jobs.start(
+            "add", lambda reporter: self.add_source(source, name, follow, reporter))
+
+    def add_zip_bytes(self, data: bytes, name: str, on_progress=None) -> dict:
         tmp = Path(tempfile.mkdtemp(prefix="studio-up-"))
         zpath = tmp / (re.sub(r"[^\w.-]", "_", name) or "upload.zip")
         zpath.write_bytes(data)
         base = re.sub(r"\.zip$", "", name, flags=re.I)
-        return self.add_source(str(zpath), name=re.sub(r"[^\w.-]", "_", base) or "pack")
+        return self.add_source(str(zpath), name=re.sub(r"[^\w.-]", "_", base) or "pack",
+                               on_progress=on_progress)
+
+    def start_upload_job(self, data: bytes, name: str) -> str:
+        return self.jobs.start(
+            "upload", lambda reporter: self.add_zip_bytes(data, name, reporter))
+
+    def job_status(self, job_id: str) -> dict:
+        st = self.jobs.get(job_id)
+        if st is None:
+            raise KeyError(job_id)
+        return st
 
     def _register(self, pack_dir: Path, rep, follow: bool) -> dict:
         manifest = json.loads((pack_dir / "manifest.json").read_text())
@@ -146,14 +170,15 @@ class StudioService:
                 "present_in_install": rep.present_in_install}
 
     def apply(self, name: str, only: set[str] | None = None,
-              dry_run: bool = False) -> dict:
+              dry_run: bool = False, on_progress=None) -> dict:
         with self._store() as store:
             pack = self._find(store, name)
         if pack is None:
             raise KeyError(name)
         pack_dir = Path(pack["local_path"])
         origin = f"pack:{name}"
-        rep = self.mgr.apply_mirror(pack_dir, origin=origin, dry_run=dry_run, only=only)
+        rep = self.mgr.apply_mirror(pack_dir, origin=origin, dry_run=dry_run, only=only,
+                                    on_progress=on_progress or (lambda *a: None))
         txt = pack_dir / "TRANSLATION.txt"
         translated = False
         if txt.exists() and (only is None or "translation" in only) and not dry_run:
@@ -162,6 +187,11 @@ class StudioService:
         return {"applied": rep["applied"], "collisions": rep["collisions"],
                 "ignored": len(rep["ignored"]), "translated": translated,
                 "dry_run": dry_run}
+
+    def start_apply_job(self, name: str, only: set[str] | None = None,
+                        dry_run: bool = False) -> str:
+        return self.jobs.start(
+            "apply", lambda reporter: self.apply(name, only, dry_run, reporter))
 
     def remove(self, name: str) -> dict:
         with self._store() as store:
@@ -230,6 +260,9 @@ def make_handler(svc: StudioService):
                 m = re.match(r"^/api/packs/([^/]+)/coverage$", path)
                 if m:
                     return self._send(200, svc.coverage(_dec(m.group(1))))
+                m = re.match(r"^/api/jobs/([^/]+)$", path)
+                if m:
+                    return self._send(200, svc.job_status(m.group(1)))
                 return self._send(404, {"error": "not found"})
             except KeyError as e:
                 return self._send(404, {"error": f"introuvable : {e}"})
@@ -240,23 +273,28 @@ def make_handler(svc: StudioService):
             u = urlparse(self.path)
             path, qs = u.path, parse_qs(u.query)
             try:
+                # Opérations longues (téléchargement, normalisation, application) : lancées
+                # en tâche de fond, la requête renvoie IMMÉDIATEMENT un job_id à interroger
+                # via GET /api/jobs/<id> — fermer l'onglet n'interrompt jamais le travail.
                 if path == "/api/packs/add":
                     b = self._body_json()
-                    return self._send(200, svc.add_source(
-                        b["source"], b.get("name"), b.get("follow", False)))
+                    jid = svc.start_add_job(b["source"], b.get("name"), b.get("follow", False))
+                    return self._send(202, {"job_id": jid})
                 if path == "/api/packs/upload":
                     n = int(self.headers.get("Content-Length", 0))
                     data = self.rfile.read(n)
                     fname = self.headers.get("X-Filename", "upload.zip")
-                    return self._send(200, svc.add_zip_bytes(data, fname))
+                    jid = svc.start_upload_job(data, fname)
+                    return self._send(202, {"job_id": jid})
                 if path == "/api/packs/update":
                     return self._send(200, {"ok": True, "note": "voir CLI `packs update`"})
                 m = re.match(r"^/api/packs/([^/]+)/apply$", path)
                 if m:
                     b = self._body_json()
                     only = set(b["only"]) if b.get("only") else None
-                    return self._send(200, svc.apply(
-                        _dec(m.group(1)), only=only, dry_run=b.get("dry_run", False)))
+                    jid = svc.start_apply_job(_dec(m.group(1)), only=only,
+                                              dry_run=b.get("dry_run", False))
+                    return self._send(202, {"job_id": jid})
                 m = re.match(r"^/api/packs/([^/]+)/remove$", path)
                 if m:
                     return self._send(200, svc.remove(_dec(m.group(1))))

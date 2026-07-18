@@ -114,14 +114,34 @@ def test_http_inventory(server):
     assert code == 200 and inv["os"] == "test"
 
 
-def test_http_add_and_upload(server, svc, tmp_path):
-    import io
-    import zipfile
-    # add par source (dossier)
+def _wait_job(server, job_id, timeout=5.0):
+    """Interroge /api/jobs/<id> jusqu'à ce qu'il ne soit plus 'running' (ou timeout)."""
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        code, st = _get(server, f"/api/jobs/{job_id}")
+        assert code == 200
+        if st["status"] != "running":
+            return st
+        time.sleep(0.02)
+    raise AssertionError(f"job {job_id} toujours 'running' après {timeout}s")
+
+
+def test_http_add_is_job_based_and_survives_polling(server, svc, tmp_path):
+    """L'ajout renvoie IMMÉDIATEMENT un job_id (202) — le téléchargement/normalisation tourne
+    en tâche de fond, indépendant de la requête HTTP d'origine."""
     code, r = _post(server, "/api/packs/add", {"source": str(_pack(tmp_path / "s")),
                                                "name": "ViaSource"})
-    assert code == 200 and r["name"] == "ViaSource"
-    # upload d'un zip (drag & drop)
+    assert code == 202 and "job_id" in r
+    st = _wait_job(server, r["job_id"])
+    assert st["status"] == "done"
+    assert st["result"]["name"] == "ViaSource"
+    assert {p["name"] for p in svc.packs()} == {"ViaSource"}
+
+
+def test_http_upload_is_job_based(server, svc, tmp_path):
+    import io
+    import zipfile
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         p = _pack(tmp_path / "z")
@@ -130,9 +150,38 @@ def test_http_add_and_upload(server, svc, tmp_path):
                 zf.write(f, f.relative_to(p))
     code, r = _post(server, "/api/packs/upload", buf.getvalue(),
                     headers={"X-Filename": "MonPack.zip"})
-    assert code == 200 and r["name"] == "MonPack"
-    names = {p["name"] for p in svc.packs()}
-    assert {"ViaSource", "MonPack"} <= names
+    assert code == 202 and "job_id" in r
+    st = _wait_job(server, r["job_id"])
+    assert st["status"] == "done" and st["result"]["name"] == "MonPack"
+    assert "MonPack" in {p["name"] for p in svc.packs()}
+
+
+def test_http_apply_is_job_based_with_progress(server, svc, tmp_path):
+    svc.add_source(str(_pack(tmp_path / "s")), name="ToApply")
+    code, r = _post(server, "/api/packs/ToApply/apply", {})
+    assert code == 202 and "job_id" in r
+    st = _wait_job(server, r["job_id"])
+    assert st["status"] == "done"
+    assert "Playmats/Blue.png" in st["result"]["applied"]
+    # la progression a bien été rapportée à un moment (phase="apply")
+    assert st["phase"] == "apply" and st["total"] > 0
+
+
+def test_http_job_error_surfaces_via_status(server, tmp_path):
+    code, r = _post(server, "/api/packs/add", {"source": str(tmp_path / "nexiste-pas")})
+    assert code == 202
+    st = _wait_job(server, r["job_id"])
+    assert st["status"] == "error"
+    assert "non exploitable" in st["error"]
+
+
+def test_http_unknown_job_is_404(server):
+    req = urllib.request.Request(server + "/api/jobs/inconnu")
+    try:
+        urllib.request.urlopen(req)
+        assert False, "aurait dû lever 404"
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
 
 
 def test_http_error_is_json(server):

@@ -57,6 +57,19 @@
   .deck{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
   .deck:last-child{border:0} .deck .l{font-weight:600} .deck .adv{color:var(--muted);font-size:12px}
   .empty{color:var(--muted);text-align:center;padding:20px;font-size:13px}
+  #activity{display:none;background:var(--panel);border:1px solid var(--accent2);
+    border-radius:var(--radius);padding:16px 22px}
+  #activity.show{display:block}
+  #activity h2{margin:0 0 10px;font-size:13px;color:var(--accent2)}
+  .job{margin-bottom:12px} .job:last-child{margin-bottom:0}
+  .job .l{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
+  .job .l b{color:var(--txt)} .job .l span{color:var(--muted)}
+  .job .bar{height:7px}
+  button[disabled]{opacity:.5;cursor:not-allowed}
+  .spin{display:inline-block;width:10px;height:10px;border-radius:50%;
+    border:2px solid var(--line);border-top-color:var(--accent2);
+    animation:spin .7s linear infinite;margin-right:6px;vertical-align:-1px}
+  @keyframes spin{to{transform:rotate(360deg)}}
   .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--panel2);
     border:1px solid var(--line);border-radius:10px;padding:11px 18px;box-shadow:0 8px 30px #0008;
     opacity:0;transition:.2s;pointer-events:none;max-width:80vw}
@@ -71,11 +84,15 @@
 </header>
 
 <main>
+  <div id="activity"><h2>⏳ En cours</h2><div id="activity-jobs"></div></div>
+
   <div class="grid">
     <section>
       <h2>Ajouter un thème / pack</h2>
       <p class="sub">Site Themer, alt-arts, patch FR… — dépose un <b>.zip</b>, ou colle une URL
-        (GitHub / Dropbox) ou un chemin local.</p>
+        (GitHub / Dropbox) ou un chemin local. Les gros dossiers (plusieurs centaines de Mo)
+        peuvent prendre quelques minutes — <b>tu peux fermer cet onglet</b>, l'opération
+        continue et reprendra son affichage à la réouverture.</p>
       <div class="drop" id="drop">
         <div>📦 Glisse un <b>.zip</b> ici</div>
         <div class="hint">ou utilise le champ ci-dessous</div>
@@ -87,7 +104,7 @@
         <input id="src-name" placeholder="nom (optionnel)" style="flex:1">
         <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px">
           <input type="checkbox" id="follow" style="width:auto"> suivi</label>
-        <button onclick="addSource()">Analyser</button>
+        <button id="analyser-btn" onclick="addSource()">Analyser</button>
       </div>
       <div class="hint">« Analyser » normalise et rapporte — <b>rien n'est appliqué</b> au jeu
         tant que tu ne cliques pas « Appliquer ».</div>
@@ -156,7 +173,7 @@ async function loadPacks(){
       <div class="meta">${p.cards} cartes · ${p.present_in_install} cibles présentes dans le jeu
         ${p.translation?' · traduction':''}${p.unclassified?` · ${p.unclassified} non classés`:''}</div>
       <div class="actions">
-        <button class="mini" onclick="apply('${p.name}')">Appliquer</button>
+        <button class="mini" onclick="apply('${p.name}',this)">Appliquer</button>
         <button class="mini ghost" onclick="coverage('${p.name}',this)">Couverture de mes decks</button>
         <button class="mini ghost" onclick="remove('${p.name}')">Restaurer / retirer</button>
       </div>
@@ -175,31 +192,101 @@ async function loadDecks(){
   }).join('');
 }
 
+// ------------------------------------------------------------------ jobs de fond
+// Une opération longue (téléchargement, normalisation, application) tourne dans un THREAD
+// SERVEUR indépendant de cette page : fermer l'onglet ou recharger n'interrompt rien. On
+// mémorise les jobs actifs dans localStorage pour reprendre leur affichage après un rechargement.
+const JOBS_KEY = 'studio_active_jobs';
+const PHASE_LABEL = {download:'Téléchargement', extract:'Extraction', classify:'Analyse',
+                     copy:'Copie', apply:'Application'};
+
+function getJobs(){ try{ return JSON.parse(localStorage.getItem(JOBS_KEY) || '[]'); } catch{ return []; } }
+function setJobs(l){ localStorage.setItem(JOBS_KEY, JSON.stringify(l)); }
+function upsertJob(job){
+  const l = getJobs().filter(x=>x.id!==job.id);
+  l.push(job); setJobs(l); renderActivity();
+}
+function dropJob(id){ setJobs(getJobs().filter(x=>x.id!==id)); renderActivity(); }
+
+function renderActivity(){
+  const jobs = getJobs();
+  const panel = $('#activity');
+  panel.classList.toggle('show', jobs.length > 0);
+  $('#activity-jobs').innerHTML = jobs.map(j=>{
+    const label = PHASE_LABEL[j.phase] || j.phase || 'en cours';
+    const pct = j.total ? Math.round(100*j.done/j.total) : null;
+    const text = j.total ? `${label}… ${j.done}/${j.total}${pct!==null?` (${pct}%)`:''}` : `${label}…`;
+    return `<div class="job">
+      <div class="l"><b><span class="spin"></span>${j.label}</b><span>${text}</span></div>
+      <div class="bar"><i style="width:${pct??8}%"></i></div>
+    </div>`;
+  }).join('');
+}
+
+/** Enregistre le job, l'interroge jusqu'à sa fin, met à jour l'affichage — et si la page a
+ *  été rechargée pendant qu'il tournait, `resumeJobs()` (au chargement) rappelle cette même
+ *  fonction pour reprendre le suivi exactement là où il en est côté serveur. */
+async function pollJob(jobId, label){
+  upsertJob({id: jobId, label, phase: '', done: 0, total: 0});
+  try{
+    while(true){
+      const st = await api('/jobs/'+jobId);
+      upsertJob({id: jobId, label, phase: st.phase, done: st.done, total: st.total});
+      if(st.status === 'done'){ dropJob(jobId); return st.result; }
+      if(st.status === 'error'){ dropJob(jobId); throw new Error(st.error); }
+      await new Promise(r=>setTimeout(r, 700));
+    }
+  }catch(e){ dropJob(jobId); throw e; }
+}
+
+function resumeJobs(){
+  for(const j of getJobs()){
+    pollJob(j.id, j.label)
+      .then(result => { toast(`« ${result.name || j.label} » terminé.`); loadPacks(); loadStatus(); })
+      .catch(e => toast(`${j.label} : ${e.message}`, 1));
+  }
+}
+
+// ------------------------------------------------------------------ actions
 async function addSource(){
   const source=$('#src').value.trim(); if(!source) return toast('Indique une URL ou un chemin',1);
-  try{ const r=await api('/packs/add',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({source,name:$('#src-name').value.trim()||null,follow:$('#follow').checked})});
-    toast(`« ${r.name} » : ${r.summary}`); $('#src').value=''; loadPacks();
+  const name = $('#src-name').value.trim()||null;
+  const btn = $('#analyser-btn'); btn.disabled = true;
+  try{
+    const r = await api('/packs/add',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source, name, follow:$('#follow').checked})});
+    const result = await pollJob(r.job_id, `Analyse « ${name || source} »`);
+    toast(`« ${result.name} » : ${result.summary}`);
+    $('#src').value=''; $('#src-name').value='';
+    loadPacks();
   }catch(e){ toast(e.message,1); }
+  finally{ btn.disabled = false; }
 }
 
 async function uploadZip(file){
-  toast('Analyse de '+file.name+'…');
-  try{ const r=await fetch('/api/packs/upload',{method:'POST',
-    headers:{'X-Filename':file.name},body:file});
-    const j=await r.json(); if(!r.ok) throw new Error(j.error);
-    toast(`« ${j.name} » : ${j.summary}`); loadPacks();
+  try{
+    const resp = await fetch('/api/packs/upload',{method:'POST',
+      headers:{'X-Filename':file.name}, body:file});
+    const j = await resp.json();
+    if(!resp.ok) throw new Error(j.error);
+    const result = await pollJob(j.job_id, `Analyse « ${file.name} »`);
+    toast(`« ${result.name} » : ${result.summary}`);
+    loadPacks();
   }catch(e){ toast(e.message,1); }
 }
 
-async function apply(name){
-  try{ const r=await api(`/packs/${encodeURIComponent(name)}/apply`,{method:'POST',
-    headers:{'Content-Type':'application/json'},body:'{}'});
-    let m=`${r.applied.length} fichiers appliqués`;
-    if(r.translated) m+=' + traduction';
-    if(r.collisions.length) m+=` · ⚠ ${r.collisions.length} collision(s)`;
+async function apply(name, btn){
+  if(btn) btn.disabled = true;
+  try{
+    const r = await api(`/packs/${encodeURIComponent(name)}/apply`,{method:'POST',
+      headers:{'Content-Type':'application/json'},body:'{}'});
+    const result = await pollJob(r.job_id, `Application « ${name} »`);
+    let m = `${result.applied.length} fichiers appliqués`;
+    if(result.translated) m += ' + traduction';
+    if(result.collisions.length) m += ` · ⚠ ${result.collisions.length} collision(s)`;
     toast(m+'. Ferme le sim pour voir le résultat.'); loadStatus(); loadPacks();
   }catch(e){ toast(e.message,1); }
+  finally{ if(btn) btn.disabled = false; }
 }
 
 async function remove(name){
@@ -247,6 +334,7 @@ drop.addEventListener('click',()=>{const i=document.createElement('input');i.typ
 
 loadStatus().catch(e=>$('#status').innerHTML=`<span style="color:var(--accent)">${e.message}</span>`);
 loadPacks(); loadDecks();
+resumeJobs();   // reprend l'affichage des jobs encore en cours après un rechargement de page
 </script>
 </body>
 </html>

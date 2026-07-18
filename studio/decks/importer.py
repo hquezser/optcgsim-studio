@@ -24,14 +24,14 @@ lire. Pas de scraper par site : leurs DOM changent, le format natif non.
 from __future__ import annotations
 
 import re
-import ssl
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..nettls import CERT_FIX_HINT, ssl_context
+from ..nettls import CERT_FIX_HINT, is_cert_error, ssl_context
 
 # Même gabarit d'id que le reste de l'écosystème (validé sur des années de logs).
 CARD_ID = r"(?:P-[A-Z0-9]+|[A-Z]{2,4}\d{2}-\d{3})"
@@ -204,8 +204,11 @@ def fetch_url(url: str, timeout: float = 10.0) -> str:
         with urllib.request.urlopen(  # noqa: S310 (schéma vérifié)
                 req, timeout=timeout, context=ssl_context()) as resp:
             return resp.read().decode("utf-8", errors="ignore")
-    except ssl.SSLCertVerificationError as e:
-        raise ImportError_(CERT_FIX_HINT) from e
+    except urllib.error.URLError as e:
+        # voir packlib._download : urlopen() enveloppe le handshake SSL dans un URLError.
+        if is_cert_error(e):
+            raise ImportError_(CERT_FIX_HINT) from e
+        raise
 
 
 def parse_html(html: str, name: str | None = None,

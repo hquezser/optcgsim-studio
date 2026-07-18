@@ -13,6 +13,28 @@ from .decks import importer
 from .gamepaths import locate
 from .storage.local import DEFAULT_DB, LocalStore
 
+_PHASE_LABEL = {"download": "téléchargement", "extract": "extraction",
+               "classify": "analyse", "copy": "copie", "apply": "application"}
+
+
+def _console_progress(phase: str, done: int, total: int) -> None:
+    """Callback de progression pour le terminal : une ligne, écrasée en place.
+
+    Les téléchargements de dossiers communautaires complets peuvent peser plusieurs
+    centaines de Mo et prendre plusieurs minutes — sans repère visuel, ça ressemble à un
+    blocage. `total == 0` (taille inconnue) affiche un compteur simple."""
+    label = _PHASE_LABEL.get(phase, phase)
+    if phase == "download":
+        mb = f"{done // (1<<20)} Mo" + (f"/{total // (1<<20)} Mo" if total else "")
+        pct = f" ({100 * done / total:.0f}%)" if total else ""
+        print(f"\r  {label}… {mb}{pct}", end="", flush=True)
+    elif total:
+        print(f"\r  {label}… {done}/{total} ({100 * done / total:.0f}%)", end="", flush=True)
+    else:
+        print(f"\r  {label}… {done}", end="", flush=True)
+    if total and done >= total:
+        print()
+
 
 def _install(args):
     inst = locate(Path(args.app_root) if args.app_root else None)
@@ -38,7 +60,7 @@ def cmd_assets_apply_pack(args) -> int:
 
 def cmd_assets_apply_mirror(args) -> int:
     mgr = AssetManager(_install(args))
-    rep = mgr.apply_mirror(Path(args.pack), dry_run=args.dry_run)
+    rep = mgr.apply_mirror(Path(args.pack), dry_run=args.dry_run, on_progress=_console_progress)
     verb = "seraient remplacés" if args.dry_run else "remplacés"
     print(f"Racine détectée : {rep['root']}")
     print(f"{len(rep['applied'])} fichiers {verb}.")
@@ -97,7 +119,8 @@ def _find_pack(store, name: str) -> dict | None:
 
 def cmd_packs_add(args) -> int:
     inst = _install(args)
-    pack_dir, rep = packlib.add_pack(args.source, inst, name=args.name, lib_dir=_PACK_LIB)
+    pack_dir, rep = packlib.add_pack(args.source, inst, name=args.name, lib_dir=_PACK_LIB,
+                                     on_progress=_console_progress)
     manifest = json.loads((pack_dir / "manifest.json").read_text())
     if args.follow:
         manifest["followed"] = True              # source re-téléchargeable via `packs update`
@@ -176,7 +199,8 @@ def cmd_packs_apply(args) -> int:
     only = set(args.only.split(",")) if args.only else None
     mgr = AssetManager(_install(args))
     origin = f"pack:{p['name']}"
-    rep = mgr.apply_mirror(pack_dir, origin=origin, dry_run=args.dry_run, only=only)
+    rep = mgr.apply_mirror(pack_dir, origin=origin, dry_run=args.dry_run, only=only,
+                           on_progress=_console_progress)
     verb = "seraient appliqués" if args.dry_run else "appliqués"
     print(f"{len(rep['applied'])} fichiers {verb}"
           + (f" (filtre : {args.only})" if only else "") + ".")
@@ -205,7 +229,7 @@ def _reapply_if_active(mgr, name: str, pack_dir: Path) -> int:
     """Ré-applique un pack s'il a des swaps actifs (après update). Renvoie le nb appliqué."""
     origin = f"pack:{name}"
     if any(s.get("source") == origin for s in mgr.status()):
-        rep = mgr.apply_mirror(pack_dir, origin=origin)
+        rep = mgr.apply_mirror(pack_dir, origin=origin, on_progress=_console_progress)
         txt = pack_dir / "TRANSLATION.txt"
         if txt.exists():
             mgr.apply_translation(txt, origin=origin)
@@ -233,7 +257,8 @@ def cmd_packs_update(args) -> int:
                 continue
             old_files = man.get("files", {})
             try:
-                pack_dir, rep = packlib.add_pack(src, inst, name=p["name"], lib_dir=_PACK_LIB)
+                pack_dir, rep = packlib.add_pack(src, inst, name=p["name"], lib_dir=_PACK_LIB,
+                                                 on_progress=_console_progress)
             except (packlib.PackError, OSError) as e:
                 print(f"« {p['name']} » : échec du téléchargement/normalisation — {e}")
                 continue
@@ -272,7 +297,8 @@ def cmd_packs_reapply(args) -> int:
             if p is None or not Path(p["local_path"]).exists():
                 print(f"« {name} » : dossier de pack absent, impossible de ré-appliquer.")
                 continue
-            rep = mgr.apply_mirror(Path(p["local_path"]), origin=origin)
+            rep = mgr.apply_mirror(Path(p["local_path"]), origin=origin,
+                                   on_progress=_console_progress)
             txt = Path(p["local_path"]) / "TRANSLATION.txt"
             if txt.exists():
                 mgr.apply_translation(txt, origin=origin)

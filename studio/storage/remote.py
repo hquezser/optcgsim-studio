@@ -21,12 +21,12 @@ tout backend doit respecter, et sert aux tests de convergence multi-appareils.
 from __future__ import annotations
 
 import json
-import ssl
 import time
+import urllib.error
 import urllib.request
 from typing import Iterable
 
-from ..nettls import CERT_FIX_HINT, ssl_context
+from ..nettls import CERT_FIX_HINT, is_cert_error, ssl_context
 
 
 class FakeRemote:
@@ -90,8 +90,11 @@ class RestRemote:
             if e.code == 404:
                 return None
             raise
-        except ssl.SSLCertVerificationError as e:
-            raise RuntimeError(CERT_FIX_HINT) from e
+        except urllib.error.URLError as e:
+            # voir packlib._download : urlopen() enveloppe le handshake SSL dans un URLError.
+            if is_cert_error(e):
+                raise RuntimeError(CERT_FIX_HINT) from e
+            raise
 
     def list(self, entity: str, include_deleted: bool = False) -> list[dict]:
         rows = self._req("GET", f"/v1/{entity}?since=0") or []

@@ -27,14 +27,22 @@ import hashlib
 import json
 import re
 import shutil
-import ssl
+import urllib.error
 import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from ..gamepaths import GameInstall
-from ..nettls import CERT_FIX_HINT, ssl_context
+from ..nettls import CERT_FIX_HINT, is_cert_error, ssl_context
+
+# Callback de progression optionnel : on_progress(phase, done, total). `total == 0` = inconnu.
+OnProgress = Callable[[str, int, int], None]
+
+
+def _noop_progress(phase: str, done: int, total: int) -> None:
+    pass
 
 # Gabarit d'id partagé avec le reste de l'écosystème.
 CARD_ID = r"(?:P-[A-Z0-9]+|[A-Z]{2,4}\d{2}-\d{3})"
@@ -79,8 +87,9 @@ class PackReport:
 
 
 # --------------------------------------------------------------------------- ingestion
-def _safe_extract(zf: zipfile.ZipFile, dest: Path) -> None:
-    """Extraction protégée contre le zip-slip (aucun membre hors de `dest`).
+def _safe_extract(zf: zipfile.ZipFile, dest: Path,
+                  on_progress: OnProgress = _noop_progress) -> None:
+    """Extraction protégée contre le zip-slip (aucun membre hors de `dest`), avec progression.
 
     Les exports Dropbox de dossier incluent une entrée `/` en tête (marqueur du dossier
     racine lui-même, sans contenu) : `member.filename` vaut alors littéralement `/`.
@@ -90,42 +99,49 @@ def _safe_extract(zf: zipfile.ZipFile, dest: Path) -> None:
     `zipfile.ZipFile.extractall()` applique déjà en interne (retrait des séparateurs de tête)
     avant de vérifier le confinement ; une entrée qui devient vide après ce retrait est un
     simple marqueur de dossier racine, sans contenu à valider.
+
+    La vérification et l'extraction sont fusionnées en une seule passe membre par membre
+    (plutôt que vérifier puis appeler `extractall`) : la progression (fichier N/total) en
+    découle sans coût supplémentaire.
     """
     dest = dest.resolve()
-    for member in zf.infolist():
+    members = zf.infolist()
+    total = len(members)
+    for i, member in enumerate(members, 1):
         name = member.filename.lstrip("/\\")
-        if not name:
-            continue      # marqueur du dossier racine (ex. entrée '/' des exports Dropbox)
-        target = (dest / name).resolve()
-        if not (target == dest or str(target).startswith(str(dest) + "/")):
-            raise PackError(f"Entrée d'archive hors dossier (zip-slip) : {member.filename}")
-    zf.extractall(dest)
+        if name:      # sinon : marqueur de dossier racine (entrée '/' des exports Dropbox)
+            target = (dest / name).resolve()
+            if not (target == dest or str(target).startswith(str(dest) + "/")):
+                raise PackError(f"Entrée d'archive hors dossier (zip-slip) : {member.filename}")
+        zf.extract(member, dest)
+        on_progress("extract", i, total)
 
 
-def _download(url: str, dest_zip: Path, timeout: float = 60.0) -> None:
+def _download(url: str, dest_zip: Path, timeout: float = 60.0,
+             on_progress: OnProgress = _noop_progress) -> None:
     """Télécharge en streaming (1 Mo/bloc). Les dossiers communautaires complets peuvent
-    peser plusieurs centaines de Mo (ex. « Alt Cards Jon » ≈ 614 Mo) : progression affichée
-    au-delà de 20 Mo pour que ça ne ressemble pas à un blocage."""
+    peser plusieurs centaines de Mo (ex. « Alt Cards Jon » ≈ 614 Mo) : `on_progress` permet
+    à l'appelant (CLI, API) d'afficher une progression pour que ça ne ressemble pas à un
+    blocage — packlib ne fait aucune hypothèse sur la présentation (terminal, JSON de job…)."""
     req = urllib.request.Request(url, headers={"User-Agent": "optcgsim-studio/0.1"})
     try:
         with urllib.request.urlopen(  # noqa: S310 (schéma vérifié)
                 req, timeout=timeout, context=ssl_context()) as resp:
             total = int(resp.headers.get("Content-Length") or 0)
-            show_progress = total > 20 * 1024 * 1024
             done = 0
             with dest_zip.open("wb") as out:
                 while chunk := resp.read(1 << 20):
                     out.write(chunk)
                     done += len(chunk)
-                    if show_progress:
-                        pct = 100 * done / total if total else 0
-                        print(f"\r  téléchargement… {done // (1<<20)} Mo"
-                              f"{f'/{total // (1<<20)} Mo ({pct:.0f}%)' if total else ''}",
-                              end="", flush=True)
-            if show_progress:
-                print()
-    except ssl.SSLCertVerificationError as e:
-        raise PackError(CERT_FIX_HINT) from e
+                    on_progress("download", done, total)
+    except urllib.error.URLError as e:
+        # urlopen() enveloppe TOUJOURS un échec de handshake SSL dans un URLError (le
+        # ssl.SSLCertVerificationError brut ne remonte jamais tel quel) : is_cert_error
+        # inspecte `.reason` pour le détecter ; toute autre URLError (DNS, connexion
+        # refusée…) est relayée telle quelle, sans message d'aide trompeur.
+        if is_cert_error(e):
+            raise PackError(CERT_FIX_HINT) from e
+        raise
 
 
 def _resolve_url(url: str) -> str:
@@ -141,7 +157,8 @@ def _resolve_url(url: str) -> str:
     return url
 
 
-def ingest(source: str | Path, work_dir: Path) -> Path:
+def ingest(source: str | Path, work_dir: Path,
+          on_progress: OnProgress = _noop_progress) -> Path:
     """Résout une source (dossier, zip local, URL) en un dossier local extrait.
 
     Le réseau n'est touché que pour les URL http(s) ; dossiers et zips locaux sont hors-ligne.
@@ -151,10 +168,10 @@ def ingest(source: str | Path, work_dir: Path) -> Path:
     s = str(source)
     if s.lower().startswith(("http://", "https://")):
         zpath = work_dir / "download.zip"
-        _download(_resolve_url(s), zpath)
+        _download(_resolve_url(s), zpath, on_progress=on_progress)
         out = work_dir / "extracted"
         with zipfile.ZipFile(zpath) as zf:
-            _safe_extract(zf, out)
+            _safe_extract(zf, out, on_progress=on_progress)
         return out
     p = Path(source)
     if p.is_dir():
@@ -162,7 +179,7 @@ def ingest(source: str | Path, work_dir: Path) -> Path:
     if p.suffix.lower() == ".zip" and p.is_file():
         out = work_dir / "extracted"
         with zipfile.ZipFile(p) as zf:
-            _safe_extract(zf, out)
+            _safe_extract(zf, out, on_progress=on_progress)
         return out
     raise PackError(f"Source non exploitable (ni dossier, ni zip, ni URL) : {source}")
 
@@ -230,7 +247,8 @@ def _special_target(path: Path, install: GameInstall) -> Path | None:
 
 # --------------------------------------------------------------------------- normalisation
 def normalize(src_dir: Path, install: GameInstall, name: str,
-              source: str, lib_dir: Path = DEFAULT_LIB) -> tuple[Path, PackReport]:
+              source: str, lib_dir: Path = DEFAULT_LIB,
+              on_progress: OnProgress = _noop_progress) -> tuple[Path, PackReport]:
     """Écrit un pack canonique (miroir) dans `lib_dir/<name>/` et renvoie (chemin, rapport).
 
     Ne touche jamais au jeu. Idempotent : réécrit proprement le dossier du pack.
@@ -255,7 +273,9 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
         chosen[key] = src
 
     translation_src: Path | None = None
-    for f in sorted(p for p in src_dir.rglob("*") if p.is_file()):
+    all_files = sorted(p for p in src_dir.rglob("*") if p.is_file())
+    for i, f in enumerate(all_files, 1):
+        on_progress("classify", i, len(all_files))
         if f.is_symlink():
             rep.unclassified.append({"path": f.name, "reason": "symlink refusé"})
             continue
@@ -296,7 +316,9 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
 
     # matérialise le pack canonique + empreinte par fichier (pour le delta d'`update`)
     files: dict[str, str] = {}
-    for rel, src in chosen.items():
+    n_chosen = len(chosen)
+    for i, (rel, src) in enumerate(chosen.items(), 1):
+        on_progress("copy", i, n_chosen)
         dst = pack_dir / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
@@ -334,18 +356,26 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
 
 
 def add_pack(source: str | Path, install: GameInstall, name: str | None = None,
-             lib_dir: Path = DEFAULT_LIB, work_dir: Path | None = None
-             ) -> tuple[Path, PackReport]:
-    """Bout-en-bout : ingère une source puis la normalise en pack de bibliothèque."""
+             lib_dir: Path = DEFAULT_LIB, work_dir: Path | None = None,
+             on_progress: OnProgress = _noop_progress) -> tuple[Path, PackReport]:
+    """Bout-en-bout : ingère une source puis la normalise en pack de bibliothèque.
+
+    `on_progress(phase, done, total)` reçoit les phases "download" (réseau), "extract"
+    (zip), "classify" et "copy" (normalisation) — permet à l'appelant d'afficher une
+    progression sur des opérations qui peuvent durer plusieurs minutes (dossiers
+    communautaires de plusieurs centaines de Mo).
+    """
     work = work_dir or (Path(lib_dir) / ".work")
-    src = ingest(source, work)
-    # racine « utile » : si un seul sous-dossier enveloppe tout (zip GitHub), descendre
-    entries = [p for p in src.iterdir()] if src.is_dir() else []
-    if len(entries) == 1 and entries[0].is_dir():
-        src = entries[0]
-    pack_name = name or re.sub(r"[^\w.-]", "_", Path(str(source)).stem) or "pack"
     try:
-        return normalize(src, install, pack_name, str(source), lib_dir)
+        src = ingest(source, work, on_progress=on_progress)
+        # racine « utile » : si un seul sous-dossier enveloppe tout (zip GitHub), descendre
+        entries = [p for p in src.iterdir()] if src.is_dir() else []
+        if len(entries) == 1 and entries[0].is_dir():
+            src = entries[0]
+        pack_name = name or re.sub(r"[^\w.-]", "_", Path(str(source)).stem) or "pack"
+        return normalize(src, install, pack_name, str(source), lib_dir, on_progress=on_progress)
     finally:
+        # Nettoyage systématique (succès COMME échec) : un ingest() qui échoue à mi-chemin ne
+        # doit pas laisser de zip/dossier orphelin dans la bibliothèque.
         if work.exists() and work != Path(lib_dir):
             shutil.rmtree(work, ignore_errors=True)

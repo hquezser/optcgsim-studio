@@ -16,6 +16,7 @@ n'intervient qu'en repli si le trousseau du système est cassé.
 from __future__ import annotations
 
 import ssl
+import urllib.error
 
 
 def ssl_context() -> ssl.SSLContext:
@@ -31,6 +32,21 @@ def _probe() -> str:
     """Chemin du paquet certifi si dispo. Lève ImportError si absent (repli silencieux)."""
     import certifi
     return certifi.where()
+
+
+def is_cert_error(exc: BaseException) -> bool:
+    """Détecte une erreur de vérification de certificat — y compris enveloppée dans un
+    `urllib.error.URLError` (le cas RÉEL en pratique : `urlopen()` enveloppe systématiquement
+    les échecs de handshake SSL dans un URLError dont `.reason` porte l'exception SSL
+    d'origine ; un `except ssl.SSLCertVerificationError` nu ne l'attrape donc JAMAIS — bug
+    constaté : le message d'aide n'était jamais affiché, seule l'erreur OpenSSL brute
+    remontait à l'utilisateur)."""
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return True
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return True
+    return isinstance(reason, ssl.SSLError) and "CERTIFICATE_VERIFY_FAILED" in str(reason)
 
 
 CERT_FIX_HINT = (

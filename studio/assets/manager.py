@@ -30,8 +30,17 @@ import struct
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from ..gamepaths import GameInstall
+
+# Callback de progression optionnel : on_progress(phase, done, total). Même contrat que
+# packlib.OnProgress (types dupliqués volontairement pour ne pas coupler les deux modules).
+OnProgress = Callable[[str, int, int], None]
+
+
+def _noop_progress(phase: str, done: int, total: int) -> None:
+    pass
 
 DEFAULT_STATE_DIR = Path.home() / ".optcgsim-studio"
 
@@ -297,7 +306,8 @@ class AssetManager:
         return "other"
 
     def apply_mirror(self, pack_dir: Path, origin: str | None = None,
-                     dry_run: bool = False, only: set[str] | None = None) -> dict:
+                     dry_run: bool = False, only: set[str] | None = None,
+                     on_progress: OnProgress = _noop_progress) -> dict:
         """Applique un pack calqué sur StreamingAssets (modèle du site Themer & assimilés).
 
         Règle unique : pour chaque image du pack, si le MÊME chemin relatif existe déjà dans
@@ -321,7 +331,9 @@ class AssetManager:
         report: dict = {"root": str(root), "applied": [], "ignored": [],
                         "skipped_txt": [], "filtered": [], "collisions": []}
 
-        for src in sorted(p for p in root.rglob("*") if p.is_file()):
+        candidates = sorted(p for p in root.rglob("*") if p.is_file())
+        for i, src in enumerate(candidates, 1):
+            on_progress("apply", i, len(candidates))
             if src.is_symlink():
                 report["ignored"].append({"path": src.name, "reason": "symlink refusé"})
                 continue
