@@ -128,6 +128,14 @@
         <input id="deck-tags" placeholder="tags: ranked,op17" style="flex:1">
         <button onclick="importDeck()">Importer</button>
       </div>
+      <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+        <p class="sub" style="margin:0 0 8px">Ou un <b>pack de decks</b> entier (« Meta OP16 »,
+          « Rogue decks de Trecore »…) — dossier/zip/URL contenant un <code>deckpack.json</code>.</p>
+        <div class="row">
+          <input id="deckpack-src" placeholder="URL ou /chemin vers le deckpack" style="flex:1">
+          <button class="ghost" onclick="importDeckPack()">Importer le pack</button>
+        </div>
+      </div>
     </section>
   </div>
 
@@ -384,6 +392,19 @@ async function importDeck(){
       body:JSON.stringify(body)});
     toast(`Deck « ${r.name} » (${r.leader}, ${r.total} cartes) importé.`);
     $('#deck-text').value=''; loadDecks();
+  }catch(e){ toast(e.message,1); }
+}
+
+async function importDeckPack(){
+  const source=$('#deckpack-src').value.trim();
+  if(!source) return toast('Indique une URL ou un chemin vers le deckpack',1);
+  try{
+    const r=await api('/deckpacks/add',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source})});
+    const res=await pollJob(r.job_id, `Import du pack de decks`);
+    let m=`« ${res.name} » : ${res.imported.length} deck(s) importé(s)`;
+    if(res.failed.length) m+=`, ${res.failed.length} en échec`;
+    toast(m); $('#deckpack-src').value=''; loadDecks();
   }catch(e){ toast(e.message,1); }
 }
 

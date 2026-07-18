@@ -395,6 +395,29 @@ def cmd_decks_list(args) -> int:
     return 0
 
 
+def cmd_decks_import_pack(args) -> int:
+    """Importe une collection de decks (deckpack.json) d'un dossier/zip/URL."""
+    from .decks import deckpack
+    inst = _install(args)
+    rep = deckpack.from_source(args.source, packlib.ingest, _PACK_LIB / ".deckwork")
+    with LocalStore(Path(args.db)) as store:
+        profiles = store.list("profiles")
+        prof = profiles[0] if profiles else store.put("profiles", {"name": "default",
+                                                                   "prefs": {}})
+        for rd in rep.imported:
+            rd.deck.save_to_sim(rd.name, inst.persistent)
+            store.put("decks", {"profile_id": prof["id"], "name": rd.name,
+                                "leader": rd.deck.leader, "cards": rd.deck.cards,
+                                "tags": rd.tags, "source": rd.deck.source})
+    print(rep.summary())
+    for d in rep.imported:
+        print(f"  ✓ {d.name} ({d.deck.leader}, {d.deck.total} cartes)"
+              + (f" [{', '.join(d.tags)}]" if d.tags else ""))
+    for f in rep.failed:
+        print(f"  ✗ {f['name']} : {f['reason']}")
+    return 0
+
+
 # --------------------------------------------------------------------------- sync
 def cmd_ui(args) -> int:
     from .api.server import run_ui
@@ -484,6 +507,10 @@ def build_parser() -> argparse.ArgumentParser:
     di.add_argument("--tags", default=None, help="tags séparés par des virgules")
     di.set_defaults(func=cmd_decks_import)
     sd.add_parser("list").set_defaults(func=cmd_decks_list)
+    dip = sd.add_parser("import-pack",
+                        help="importer une collection de decks (deckpack.json : dossier/zip/URL)")
+    dip.add_argument("source", help="dossier, .zip ou URL contenant un deckpack.json")
+    dip.set_defaults(func=cmd_decks_import_pack)
 
     pui = sub.add_parser("ui", help="lance l'interface web locale (zéro dépendance)")
     pui.add_argument("--port", type=int, default=8770)

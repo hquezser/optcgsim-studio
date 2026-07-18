@@ -270,6 +270,18 @@ class StudioService:
             store.delete("cosmetic_packs", pack["id"])
         return {"restored": n, "name": name}
 
+    def _persist_deck(self, store, deck: importer.Decklist, deck_name: str,
+                      tags: list[str] | None) -> str:
+        """Écrit un deck dans le sim (.txt) + en base. Renvoie le chemin du .txt."""
+        path = deck.save_to_sim(deck_name, self.install.persistent)
+        profiles = store.list("profiles")
+        prof = profiles[0] if profiles else store.put("profiles", {"name": "default",
+                                                                   "prefs": {}})
+        store.put("decks", {"profile_id": prof["id"], "name": deck_name,
+                            "leader": deck.leader, "cards": deck.cards,
+                            "tags": tags or [], "source": deck.source})
+        return str(path)
+
     def import_deck(self, text: str | None = None, url: str | None = None,
                     name: str | None = None, tags: list[str] | None = None) -> dict:
         if url:
@@ -279,16 +291,26 @@ class StudioService:
         else:
             raise AssetError("Fournir `text` ou `url`")
         deck_name = name or f"Import {deck.leader}"
-        path = deck.save_to_sim(deck_name, self.install.persistent)
         with self._store() as store:
-            profiles = store.list("profiles")
-            prof = profiles[0] if profiles else store.put(
-                "profiles", {"name": "default", "prefs": {}})
-            store.put("decks", {"profile_id": prof["id"], "name": deck_name,
-                                "leader": deck.leader, "cards": deck.cards,
-                                "tags": tags or [], "source": deck.source})
+            path = self._persist_deck(store, deck, deck_name, tags)
         return {"name": deck_name, "leader": deck.leader, "total": deck.total,
-                "path": str(path)}
+                "path": path}
+
+    def import_deckpack(self, source: str, on_progress=None) -> dict:
+        """Importe un pack de decks (deckpack.json) : résout tous les decks puis persiste
+        ceux qui réussissent (un échec n'empêche pas les autres). Job de fond."""
+        from ..decks import deckpack
+        rep = deckpack.from_source(source, packlib.ingest, self.lib_dir / ".deckwork")
+        with self._store() as store:
+            for rd in rep.imported:
+                self._persist_deck(store, rd.deck, rd.name, rd.tags)
+        return {"name": rep.name, "author": rep.author,
+                "imported": [{"name": d.name, "leader": d.deck.leader,
+                              "total": d.deck.total, "tags": d.tags} for d in rep.imported],
+                "failed": rep.failed}
+
+    def start_deckpack_job(self, source: str) -> str:
+        return self.jobs.start("deckpack", lambda reporter: self.import_deckpack(source, reporter))
 
 
 # --------------------------------------------------------------------------- HTTP
@@ -382,6 +404,9 @@ def make_handler(svc: StudioService):
                     return self._send(200, svc.import_deck(
                         text=b.get("text"), url=b.get("url"),
                         name=b.get("name"), tags=b.get("tags")))
+                if path == "/api/deckpacks/add":
+                    b = self._body_json()
+                    return self._send(202, {"job_id": svc.start_deckpack_job(b["source"])})
                 return self._send(404, {"error": "not found"})
             except KeyError as e:
                 return self._send(404, {"error": f"introuvable : {e}"})

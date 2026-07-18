@@ -101,7 +101,19 @@ sim lit ses decks ET enregistrement en base synchronisable (tags d'environnement
 studio decks import --clipboard --name "Sanji P6K" --tags ranked,op17
 studio decks import --url https://…     # extraction générique best-effort
 studio decks import --file liste.txt
+studio decks import-pack <dossier|zip|url>   # collection entière (deckpack.json)
 studio decks list
+```
+
+**Pack de decks** (`deckpack.json`) : importe une collection nommée d'un coup (« Meta OP16 »,
+« Rogue decks de Trecore »). Manifeste propre au studio, chaque deck résolu par le moteur
+d'import ci-dessus (`text` inline, `file` dans le pack, ou `source_url`) ; un deck en échec
+n'interrompt jamais les autres (rapport importés / échecs).
+
+```json
+{"name": "Meta OP16", "author": "Trecore",
+ "decks": [{"name": "Sanji Red", "tags": ["meta"], "file": "decks/sanji.txt"},
+           {"name": "Kid", "tags": ["meta"], "source_url": "https://..."}]}
 ```
 
 Chemin garanti : le bouton « Export OPTCGSim » des sites (NakamaDecks, EgmanEvents,

@@ -81,6 +81,40 @@ def test_import_deck_writes_sim_and_db(svc):
     assert svc.decks()[0]["name"] == "D"
 
 
+# ------------------------------------------------------------------ P6 : pack de decks
+_DECK50 = "1xOP01-060\n" + "\n".join(f"4xAA{i:02d}-001" for i in range(12)) + "\n2xBB01-001"
+
+
+def test_import_deckpack_from_folder(svc, tmp_path):
+    import json
+    src = tmp_path / "pack"
+    src.mkdir()
+    (src / "deckpack.json").write_text(json.dumps({
+        "name": "Meta OP16", "author": "Trecore", "decks": [
+            {"name": "Aggro", "tags": ["meta"], "text": _DECK50},
+            {"name": "Cassé", "text": "1xOP01-060\n4xAA01-001"},   # invalide
+        ]}))
+    r = svc.import_deckpack(str(src))
+    assert r["name"] == "Meta OP16"
+    assert [d["name"] for d in r["imported"]] == ["Aggro"]
+    assert r["failed"][0]["name"] == "Cassé"
+    # deck bien persisté en base
+    assert "Aggro" in {d["name"] for d in svc.decks()}
+
+
+def test_http_deckpack_is_job_based(server, svc, tmp_path):
+    import json
+    src = tmp_path / "dp"
+    src.mkdir()
+    (src / "deckpack.json").write_text(json.dumps(
+        {"name": "P", "decks": [{"name": "Solo", "tags": ["x"], "text": _DECK50}]}))
+    code, r = _post(server, "/api/deckpacks/add", {"source": str(src)})
+    assert code == 202 and "job_id" in r
+    st = _wait_job(server, r["job_id"])
+    assert st["status"] == "done"
+    assert st["result"]["imported"][0]["name"] == "Solo"
+
+
 # ------------------------------------------------------------------ serveur HTTP réel
 @pytest.fixture()
 def server(svc):
