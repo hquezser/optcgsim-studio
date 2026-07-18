@@ -268,7 +268,7 @@ annoncée), jamais automatiquement en arrière-plan hors `packs update`.
 | P4 | frontend dropzone+préview+couverture | ~1-2 sessions | ✅ fait (+ jobs de fond) |
 | P5 | catalogue communautaire | ~½ session | à trancher (registre distant ou non) |
 | P6 | pack de decks (import groupé) | ~1 session | à trancher (qui écrit les manifestes) |
-| P7 | import sélectif (fetch ciblé GitHub + filtre disque partout) | ~1-1,5 session | vendoring card_stats.json requis |
+| P7 | import sélectif (fetch ciblé GitHub + filtre disque partout) | ~1-1,5 session | ✅ fait (a→e, token privé inclus) |
 
 Décisions ouvertes historiques (résolues par la pratique) :
 - `Custom Cards`/`Extra Alts` (Dropbox) : conventions non vérifiées — le rapport
