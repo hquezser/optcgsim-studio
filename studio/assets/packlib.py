@@ -114,9 +114,12 @@ def classify_rel(rel: str) -> tuple[str, str | None]:
         return ("translation", None)
     if ext not in IMAGE_EXT:
         return ("other", None)
-    for p in parts[:-1]:
+    for i, p in enumerate(parts[:-1]):
         if p in MIRROR_ROOTS:
             if p == "Cards":
+                # Cards/Don/Don.png -> catégorie « don » (filtrable à part) ; sinon carte.
+                if i + 1 < len(parts) - 1 and parts[i + 1] == "Don":
+                    return ("don", None)
                 return ("cards", _card_id_from_stem(stem))
             return ({"Playmats": "playmats", "CardBacks": "cardbacks",
                      "OPBounty": "other"}[p], None)

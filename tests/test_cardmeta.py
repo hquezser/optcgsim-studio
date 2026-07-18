@@ -19,5 +19,20 @@ def test_unknown_id_is_not_leader():
 
 
 def test_table_is_non_trivial():
-    # garde-fou : si leaders.json est vide/corrompu, l'import 'leaders only' serait vide
+    # garde-fou : si card_types.json est vide/corrompu, l'import 'leaders only' serait vide
     assert len(cardmeta.leader_ids()) > 50
+
+
+# ------------------------------------------------------------------ P8 : types
+def test_card_type_values():
+    assert cardmeta.card_type("OP01-001") == "Leader"
+    assert cardmeta.card_type("OP14-018") == "Event"
+    assert cardmeta.card_type("ZZ99-999") is None
+
+
+def test_ids_of_type_case_insensitive_and_disjoint():
+    ev = cardmeta.ids_of_type("event")
+    ld = cardmeta.ids_of_type("Leader")
+    assert len(ev) > 100 and len(ld) > 50
+    assert ev.isdisjoint(ld)                 # un id a un seul type
+    assert "OP14-018" in ev and "OP01-001" in ld

@@ -118,13 +118,18 @@ def _find_pack(store, name: str) -> dict | None:
 
 
 def _resolve_cli_filter(args):
-    """(only_categories, only_cards) depuis --only / --leaders-only / --for-deck."""
+    """(only_categories, only_cards) depuis --only / --only-type / --leaders-only / --for-deck."""
     from .assets import cardmeta
     cats = set(args.only.split(",")) if getattr(args, "only", None) else None
     cards = None
+    types = list(args.only_type.split(",")) if getattr(args, "only_type", None) else []
     if getattr(args, "leaders_only", False):
+        types.append("leader")
+    if types:
         cats = (cats or set()) | {"cards"}
-        cards = set(cardmeta.leader_ids())
+        cards = set()
+        for t in types:
+            cards |= set(cardmeta.ids_of_type(t))
     for_decks = getattr(args, "for_deck", None)
     if for_decks:
         with LocalStore(Path(args.db)) as store:
@@ -469,10 +474,12 @@ def build_parser() -> argparse.ArgumentParser:
     pad.add_argument("--name", default=None, help="nom du pack en bibliothèque")
     pad.add_argument("--follow", action="store_true",
                      help="source suivie : re-téléchargeable via `packs update`")
-    pad.add_argument("--only", default=None, metavar="cards,playmats,...",
+    pad.add_argument("--only", default=None, metavar="cards,playmats,don,...",
                      help="import sélectif : catégories à garder (économie disque)")
+    pad.add_argument("--only-type", default=None, metavar="leader,event,stage,character",
+                     help="import sélectif : uniquement ces types de cartes")
     pad.add_argument("--leaders-only", action="store_true",
-                     help="import sélectif : uniquement les cartes Leader")
+                     help="raccourci de --only-type leader")
     pad.add_argument("--for-deck", action="append", metavar="NOM",
                      help="import sélectif : uniquement les cartes de ce deck (répétable). "
                           "Sur une source GitHub, ne télécharge QUE le nécessaire.")

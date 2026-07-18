@@ -131,18 +131,27 @@ class StudioService:
     # n'a qu'à revenir consulter `job_status` pour retrouver son état.
     # ------------------------------------------------------------ import sélectif (P7)
     def _resolve_filter(self, only_categories: list[str] | None,
-                        for_decks: list[str] | None,
-                        leaders_only: bool) -> tuple[set[str] | None, set[str] | None]:
+                        for_decks: list[str] | None, leaders_only: bool,
+                        only_types: list[str] | None = None
+                        ) -> tuple[set[str] | None, set[str] | None]:
         """Traduit les options UI/CLI en (only_categories, only_cards) pour packlib.
 
-        - leaders_only : restreint aux cartes Leader (only_categories += cards).
-        - for_decks    : restreint aux cartes de ces decks (leader + cartes), union.
-        Les deux peuvent se combiner (union des ids). only_categories explicite est respecté."""
+        - only_types : types de cartes à garder (leader/character/event/stage) -> résolus en
+          ids via cardmeta (généralise leaders_only) ; ajoute la catégorie 'cards'.
+        - leaders_only : raccourci de only_types=['leader'].
+        - for_decks    : cartes de ces decks (leader + cartes), union.
+        Tout se compose en UNION d'ids ; only_categories explicite est respecté (peut inclure
+        'don', 'playmats', etc. — filtre par catégorie sans toucher aux ids)."""
         cats = set(only_categories) if only_categories else None
-        cards: set[str] | None = None
+        types = list(only_types or [])
         if leaders_only:
+            types.append("leader")
+        cards: set[str] | None = None
+        if types:
             cats = (cats or set()) | {"cards"}
-            cards = set(cardmeta.leader_ids())
+            cards = set()
+            for t in types:
+                cards |= set(cardmeta.ids_of_type(t))
         if for_decks:
             with self._store() as store:
                 by_name = {d["name"]: d for d in store.list("decks")}
@@ -168,18 +177,22 @@ class StudioService:
                     "reason": "Source non explorable à distance — le filtre agira après "
                               "téléchargement (économie disque seulement)."}
         total = sum(f.size for f in remote)
-        leaders = set(cardmeta.leader_ids())
-        by = {"total": total,
-              "cards": sum(f.size for f in remote
-                           if packlib.keep_rel(f.path, {"cards"}, None)),
-              "leaders": sum(f.size for f in remote
-                             if packlib.keep_rel(f.path, {"cards"}, leaders))}
+        # taille estimée par filtre (sans rien télécharger — tailles connues via Tree API).
+        def size_for(cats, cards):
+            return sum(f.size for f in remote if packlib.keep_rel(f.path, cats, cards))
+        by = {"total": total, "cards": size_for({"cards"}, None),
+              "don": size_for({"don"}, None),
+              "playmats": size_for({"playmats"}, None),
+              "translation": size_for({"translation"}, None)}
+        for t in cardmeta.TYPES:      # leaders / characters / events / stages
+            by[t.lower()] = size_for({"cards"}, set(cardmeta.ids_of_type(t)))
         return {"explorable": True, "files": len(remote), "sizes": by}
 
     def add_source(self, source: str, name: str | None = None, follow: bool = False,
                    on_progress=None, only_categories: list[str] | None = None,
-                   for_decks: list[str] | None = None, leaders_only: bool = False) -> dict:
-        cats, cards = self._resolve_filter(only_categories, for_decks, leaders_only)
+                   for_decks: list[str] | None = None, leaders_only: bool = False,
+                   only_types: list[str] | None = None) -> dict:
+        cats, cards = self._resolve_filter(only_categories, for_decks, leaders_only, only_types)
         pack_dir, rep = packlib.add_pack(source, self.install, name=name,
                                          lib_dir=self.lib_dir,
                                          on_progress=on_progress or (lambda *a: None),
@@ -189,11 +202,12 @@ class StudioService:
 
     def start_add_job(self, source: str, name: str | None = None, follow: bool = False,
                       only_categories: list[str] | None = None,
-                      for_decks: list[str] | None = None,
-                      leaders_only: bool = False) -> str:
+                      for_decks: list[str] | None = None, leaders_only: bool = False,
+                      only_types: list[str] | None = None) -> str:
         return self.jobs.start(
             "add", lambda reporter: self.add_source(
-                source, name, follow, reporter, only_categories, for_decks, leaders_only))
+                source, name, follow, reporter, only_categories, for_decks,
+                leaders_only, only_types))
 
     # ------------------------------------------------------------ config token (secret)
     def get_config(self) -> dict:
@@ -379,7 +393,8 @@ def make_handler(svc: StudioService):
                     jid = svc.start_add_job(
                         b["source"], b.get("name"), b.get("follow", False),
                         only_categories=b.get("only_categories"),
-                        for_decks=b.get("for_decks"), leaders_only=b.get("leaders_only", False))
+                        for_decks=b.get("for_decks"), leaders_only=b.get("leaders_only", False),
+                        only_types=b.get("only_types"))
                     return self._send(202, {"job_id": jid})
                 if path == "/api/packs/upload":
                     n = int(self.headers.get("Content-Length", 0))

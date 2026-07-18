@@ -172,10 +172,20 @@ def test_preview_github_sizes(server, svc, monkeypatch):
     assert r["explorable"] is True and r["files"] == 3
     assert r["sizes"]["total"] == 7000
     assert r["sizes"]["cards"] == 2000       # les 2 cartes, pas le playmat
-    assert r["sizes"]["leaders"] == 1000     # le seul leader
+    assert r["sizes"]["leader"] == 1000      # le seul leader (clé par type)
 
 
 # ------------------------------------------------------------------ P7 : add filtré (job)
+def test_resolve_filter_only_types(svc):
+    from studio.assets import cardmeta
+    cats, cards = svc._resolve_filter(None, None, False, only_types=["event"])
+    assert cats == {"cards"}
+    assert cards == set(cardmeta.ids_of_type("event"))
+    # combinaison event + leader = union
+    cats2, cards2 = svc._resolve_filter(None, None, False, only_types=["event", "leader"])
+    assert cards2 == set(cardmeta.ids_of_type("event")) | set(cardmeta.ids_of_type("leader"))
+
+
 def test_add_with_leaders_only_filter(server, svc, tmp_path, monkeypatch):
     from studio.assets import sourcefetch
     remote = [sourcefetch.RemoteFile("Cards/OP01/OP01-001.png", 1),   # leader

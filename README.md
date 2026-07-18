@@ -166,6 +166,26 @@ en silence). `reapply` détecte les swaps passés à l'état `overwritten` (typi
 une mise à jour du simulateur qui réécrit `StreamingAssets`) et réinjecte les packs depuis
 la bibliothèque, sans re-téléchargement.
 
+### Import sélectif par type de carte
+
+```bash
+studio packs add <url> --only-type leader,event      # que les leaders + événements
+studio packs add <url> --only don                    # que l'image de DON!!
+studio packs add <url> --for-deck "Sanji P6K"        # que les cartes de ce deck
+studio packs add <url> --leaders-only                # raccourci de --only-type leader
+```
+
+Sur une source **GitHub** (public ou privé avec token), le filtre s'applique **avant
+téléchargement** : seuls les fichiers voulus sont récupérés. Mesuré sur le repo FR :
+2,1 Go complet → 175 Mo en leaders, 257 Mo en événements. L'UI affiche l'estimation de
+taille par type avant de lancer. Types reconnus via `card_types.json` (id → Leader /
+Character / Event / Stage) ; DON traité comme sa propre catégorie.
+
+Conseil d'organisation des dépôts (P8) : les images étant volumineuses, héberger
+**plusieurs dépôts par famille** (alt-arts / traductions / playmats-cardbacks-dons) plutôt
+qu'un seul — on reste sous les limites GitHub (repos < ~1 Go) et chaque famille se met à
+jour indépendamment. Le studio gère autant de sources suivies que voulu.
+
 ## Pilier 3 — Synchronisation multi-appareils (`studio sync`)
 
 Offline-first : SQLite local par défaut, cloud en opt-in — **même protocole** (`SyncStore`),

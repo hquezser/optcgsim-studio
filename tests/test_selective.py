@@ -54,6 +54,19 @@ def test_keep_rel_only_cards():
     assert packlib.keep_rel("Playmats/Blue.png", None, only)
 
 
+def test_classify_don_is_own_category():
+    assert packlib.classify_rel("Cards/Don/Don.png") == ("don", None)
+    # une carte normale sous Cards reste "cards"
+    assert packlib.classify_rel("Cards/OP01/OP01-001.png")[0] == "cards"
+
+
+def test_keep_rel_don_category():
+    assert packlib.keep_rel("Cards/Don/Don.png", {"don"}, None)
+    assert not packlib.keep_rel("Cards/OP01/OP01-001.png", {"don"}, None)
+    # filtrer les cartes n'emporte pas le DON
+    assert not packlib.keep_rel("Cards/Don/Don.png", {"cards"}, None)
+
+
 def test_keep_rel_leaders_only_composition():
     # "leaders alternatifs uniquement" = cards + ids leaders
     leaders = {"OP01-001"}   # OP01-001 est un leader (cf. cardmeta)

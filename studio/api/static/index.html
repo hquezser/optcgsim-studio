@@ -106,12 +106,20 @@
           <input type="checkbox" id="follow" style="width:auto"> suivi</label>
         <button id="analyser-btn" onclick="addSource()">Analyser</button>
       </div>
-      <div class="row" style="flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted)">
-        <span>Import sélectif :</span>
+      <div class="row" style="flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted)">
+        <span>Import sélectif (rien de coché = tout) :</span>
         <label style="display:flex;align-items:center;gap:5px">
-          <input type="checkbox" id="f-leaders" style="width:auto"> leaders uniquement</label>
+          <input type="checkbox" class="f-type" value="leader" style="width:auto"> leaders</label>
         <label style="display:flex;align-items:center;gap:5px">
-          <input type="checkbox" id="f-cards" style="width:auto"> cartes uniquement (pas de tapis/fonds)</label>
+          <input type="checkbox" class="f-type" value="character" style="width:auto"> personnages</label>
+        <label style="display:flex;align-items:center;gap:5px">
+          <input type="checkbox" class="f-type" value="event" style="width:auto"> événements</label>
+        <label style="display:flex;align-items:center;gap:5px">
+          <input type="checkbox" class="f-type" value="stage" style="width:auto"> stages</label>
+        <label style="display:flex;align-items:center;gap:5px">
+          <input type="checkbox" class="f-cat" value="don" style="width:auto"> don</label>
+        <label style="display:flex;align-items:center;gap:5px">
+          <input type="checkbox" class="f-cat" value="playmats" style="width:auto"> tapis</label>
       </div>
       <div class="hint" id="preview-hint"></div>
       <div class="hint">« Analyser » normalise et rapporte — <b>rien n'est appliqué</b> au jeu
@@ -277,26 +285,47 @@ function resumeJobs(){
 }
 
 // ------------------------------------------------------------------ actions
+function checkedValues(cls){
+  return [...document.querySelectorAll('.'+cls+':checked')].map(c=>c.value);
+}
 function currentFilter(){
-  const cats = $('#f-cards').checked ? ['cards'] : null;
-  return {only_categories: cats, leaders_only: $('#f-leaders').checked};
+  const types = checkedValues('f-type');       // leader/character/event/stage
+  const cats = checkedValues('f-cat');         // don/playmats
+  const body = {};
+  if(types.length) body.only_types = types;
+  // catégories : si des types sont cochés le back ajoute 'cards' ; on ajoute les extras cochés
+  if(cats.length) body.only_categories = (types.length ? ['cards', ...cats] : cats);
+  return body;
 }
 const fmtMo = b => (b/1048576).toFixed(b>10485760?0:1)+' Mo';
 
+// taille estimée selon le filtre courant, à partir des tailles par catégorie/type de l'aperçu
+function estimateSize(s){
+  const types = checkedValues('f-type'), cats = checkedValues('f-cat');
+  if(!types.length && !cats.length) return s.total;
+  let n = 0;
+  for(const t of types) n += s[t] || 0;        // leader/character/event/stage
+  for(const c of cats)  n += s[c] || 0;        // don/playmats
+  return n;
+}
+
 // aperçu de taille (source GitHub) : recalcule ce qui SERAIT téléchargé selon le filtre
+let _lastSizes = null;
 async function refreshPreview(){
   const source=$('#src').value.trim();
   const hint=$('#preview-hint');
-  if(!/github\.com/.test(source)){ hint.textContent=''; return; }
+  if(!/github\.com/.test(source)){ hint.textContent=''; _lastSizes=null; return; }
   try{
-    const p = await api('/packs/preview',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({source})});
-    if(!p.explorable){ hint.textContent='ℹ '+(p.reason||'source non explorable'); return; }
-    const s=p.sizes, f=currentFilter();
-    const sel = f.leaders_only ? s.leaders : (f.only_categories ? s.cards : s.total);
-    hint.innerHTML = `📦 ${p.files} fichiers, ${fmtMo(s.total)} au total — `
-      + `<b>${fmtMo(sel)}</b> avec le filtre actuel `
-      + `(leaders ${fmtMo(s.leaders)} · cartes ${fmtMo(s.cards)})`;
+    if(!_lastSizes || refreshPreview._src!==source){
+      const p = await api('/packs/preview',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({source})});
+      if(!p.explorable){ hint.textContent='ℹ '+(p.reason||'source non explorable'); _lastSizes=null; return; }
+      _lastSizes = {...p.sizes, _files:p.files}; refreshPreview._src = source;
+    }
+    const s=_lastSizes;
+    hint.innerHTML = `📦 ${s._files} fichiers, ${fmtMo(s.total)} au total — `
+      + `<b>${fmtMo(estimateSize(s))}</b> avec le filtre actuel `
+      + `(leaders ${fmtMo(s.leader)} · événements ${fmtMo(s.event)} · cartes ${fmtMo(s.cards)})`;
   }catch(e){ hint.textContent='ℹ '+e.message; }
 }
 
@@ -421,8 +450,8 @@ drop.addEventListener('click',()=>{const i=document.createElement('input');i.typ
 let previewTimer;
 $('#src').addEventListener('input', ()=>{clearTimeout(previewTimer);
   previewTimer=setTimeout(refreshPreview, 500);});
-$('#f-leaders').addEventListener('change', refreshPreview);
-$('#f-cards').addEventListener('change', refreshPreview);
+document.querySelectorAll('.f-type, .f-cat').forEach(
+  c=>c.addEventListener('change', refreshPreview));
 
 loadStatus().catch(e=>$('#status').innerHTML=`<span style="color:var(--accent)">${e.message}</span>`);
 loadPacks(); loadDecks(); loadTokenState();
