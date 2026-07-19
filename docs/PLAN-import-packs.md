@@ -570,6 +570,97 @@ l'abandon de P5) — la communauté héberge et partage ses propres URLs.
 
 Effort : ~½ session (surtout de la doc + une commande validate ; le moteur existe).
 
+## Chantier P10 — Collections de packs (importer les dépôts liés d'un coup, via l'UI)
+
+**PLANIFIÉ, pas commencé.** Contexte : après P8+ (repos build), l'utilisateur a généré et
+poussé 6 dépôts GitHub privés pour un seul « look » cohérent (FR classique + full-art) :
+`optcgsim-translated-fr-classic`, `optcgsim-translated-fr-fullart`, `optcgsim-translations-fr`,
+`optcgsim-cardbacks`, `optcgsim-playmats`, `optcgsim-cards-alt`. Aujourd'hui, les récupérer
+demande **6 allers-retours manuels** dans l'UI (coller chaque URL, cocher `--follow`, valider)
+— sans rien qui explique que `translated-fr-classic` et `translated-fr-fullart` sont deux
+choix **alternatifs** du même slot (les cartes), alors que `translations-fr`/`cardbacks`/
+`playmats` sont, eux, **complémentaires** (tous à ajouter).
+
+### Constat de départ (audité avant de planifier, pas supposé)
+
+- L'UI a **déjà** un champ token GitHub (Réglages, `index.html:162-172` → `POST /api/config`)
+  et un flux complet d'ajout de pack avec import sélectif (`index.html:90-128` → `POST
+  /api/packs/add`, supporte déjà `--only-type`/`--only-categories`/`--follow`). Les erreurs
+  GitHub (403 rate-limit, 401/403 privé, 404) remontent déjà lisiblement dans un toast — rien
+  à réparer là-dessus.
+- **Aucun concept de « plusieurs sources en une fois »** n'existe pour les packs cosmétiques
+  (seul `deckpack.json`, pour les DECKS, a cette notion — pas pour les packs d'images).
+- Donc le manque réel n'est PAS technique (l'ajout d'un pack marche bien, y compris privé) —
+  c'est l'absence d'un **regroupement** qui dise « ces N dépôts vont ensemble, voici lesquels
+  sont interchangeables et lesquels s'ajoutent tous ».
+
+### (a) Format `collection.json` — décrire la constellation de dépôts
+
+Petit manifeste, même esprit que `deckpack.json` (P6/P9) mais pour des packs cosmétiques :
+
+```json
+{
+  "schema_version": 1,
+  "name": "FR classique + full-art",
+  "packs": [
+    {"url": "https://github.com/hquezser/optcgsim-translated-fr-classic",
+     "label": "Cartes FR classiques", "variant_group": "cards"},
+    {"url": "https://github.com/hquezser/optcgsim-translated-fr-fullart",
+     "label": "Cartes FR alternatives (full-art)", "variant_group": "cards"},
+    {"url": "https://github.com/hquezser/optcgsim-translations-fr", "label": "Traduction FR"},
+    {"url": "https://github.com/hquezser/optcgsim-cardbacks", "label": "Dos de carte"},
+    {"url": "https://github.com/hquezser/optcgsim-playmats", "label": "Tapis de jeu"}
+  ]
+}
+```
+Deux entrées qui partagent le même `variant_group` sont des ALTERNATIVES (un seul choix,
+présenté en radio) ; toute entrée sans `variant_group` est complémentaire (case à cocher,
+cochée par défaut). Pas de nouvelle logique de collision à l'application : le radio résout
+le choix AU MOMENT DE L'IMPORT (un seul des deux ajouté), donc le comportement existant
+« dernier pack appliqué gagne » (README) n'a jamais à arbitrer entre les deux.
+
+### (b) Génération côté mainteneur (CLI, `repos build`/`repos update`)
+
+`repos build` gagne des options optionnelles `--collection-label "…"` et `--collection-group
+<clé>` ; à chaque build, upsert (par famille) d'une entrée dans `<out_dir>/collection.json`
+(fichier VISIBLE, à côté de `.repos-build.json` — celui-ci reste cependant le seul à contenir
+les sources brutes ; `collection.json` ne référence que les URLs GitHub PUBLIÉES, à remplir/
+corriger manuellement après le premier `git push` si l'URL du dépôt final diffère). Reste
+CLI-only (cf. [[studio-ui-vs-maintainer-boundary]] : produire le manifeste est un geste de
+mainteneur, pas une action end-user).
+
+### (c) Import de collection — UI (end-user)
+
+Nouvelle section UI « Importer une collection » : coller une URL de manifeste (ou upload du
+fichier) → `POST /api/collections/resolve` (nouvelle route, fetch côté serveur — réutilise le
+token déjà configuré si le manifeste est sur un hébergement qui en a besoin) → rendu : groupes
+`variant_group` en radio, entrées seules en checkbox (cochées par défaut) → bouton unique
+« Importer la sélection » qui appelle `POST /api/packs/add` en série pour chaque pack
+sélectionné (réutilise TEL QUEL le flux de job existant — juste plusieurs jobs enchaînés avec
+une barre de progression globale N/M), pas de nouvelle route d'ajout.
+
+### (d) Tests à couvrir
+
+- Parsing `collection.json` (radio group vs checkbox, `schema_version` future = avertissement,
+  même pattern que `deckpack`/`repos build`).
+- `repos build --collection-label/--collection-group` : upsert par famille, ne duplique pas.
+- `/api/collections/resolve` : réutilise le token, erreurs lisibles (même style que
+  `/api/packs/preview`).
+- UI : sélection d'un radio par groupe suffit à activer l'import ; les compléments sont
+  cochés par défaut ; N jobs lancés = N packs sélectionnés (pas plus, pas moins).
+
+### Décisions à trancher avant d'implémenter
+
+- Où vit `collection.json` publié : dans l'un des 6 dépôts (lequel ?), un dépôt dédié
+  (`optcgsim-collections`, écho de P9), ou un simple gist personnel ? Vu que ces dépôts sont
+  **privés** (pas destinés à la communauté pour l'instant), un gist privé ou un fichier local
+  uploadé dans l'UI suffit largement — pas besoin d'un 7ᵉ dépôt.
+- `--for-deck` existe déjà côté API/CLI mais n'a pas de contrôle dans l'UI (gap mineur trouvé
+  pendant l'audit, indépendant de P10 — à traiter séparément si besoin).
+
+Effort estimé : ~1 session (format + génération CLI + route de résolution + UI radio/checkbox
++ enchaînement de jobs existants).
+
 ## Garde-fous inchangés
 
 Le chemin d'écriture unique reste `_swap` (whitelist, magic-bytes+dimensions, atomique,
@@ -591,6 +682,7 @@ annoncée), jamais automatiquement en arrière-plan hors `packs update`.
 | P7 | import sélectif (fetch ciblé GitHub + filtre disque partout) | ~1-1,5 session | ✅ fait (a→e, token privé inclus) |
 | P8 | dépôt(s) privé(s) + import granulaire par type de carte | ~½ session | ✅ fait (card_types, --only-type, DON, UI par type ; multi-dépôts documenté) |
 | P9 | publier le format deckpack (spec + validate contributeur) | ~½ session | ✅ fait (repo optcgsim-deckpacks : spec+schema+exemple+validate CI ; studio: schema_version + validate-pack) |
+| P10 | collections de packs (import multi-dépôts guidé, variantes vs complémentaires) | ~1 session | 📋 planifié (voir chantier P10 — format + génération CLI + route de résolution + UI) |
 
 Décisions ouvertes historiques (résolues) :
 - `Custom Cards`/`Extra Alts` (Dropbox) : le rapport « non-classés » de P1 les révèle.
