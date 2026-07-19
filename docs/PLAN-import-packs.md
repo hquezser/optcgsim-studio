@@ -303,6 +303,29 @@ d'images custom ; (b) permettre l'import par petite partie (leaders, événement
 
 Effort : ~½ session (extension du socle P7 déjà en place ; le gros est fait).
 
+### (c) Constructeur de dépôts depuis liens partagés — FAIT (2026-07-19)
+
+Demande de suivi : **générer le contenu des dépôts privés à partir des liens déjà partagés
+(Dropbox / Drive / GitHub)**. Décisions utilisateur : Drive = **fichiers/zip partagés** (pas
+de crawl de dossier, zéro auth) ; découpage **par famille + cartes par type** ; **génération
+locale, l'utilisateur pousse** (pas de push automatique).
+
+- `packlib` : téléchargement **Google Drive** (fichier/zip partagé) via `_drive_download`
+  (pot à cookies + jeton `confirm` d'analyse antivirus) ; `ingest` route les liens Drive et
+  gère le **fichier unique** (pas seulement les zip) via `_materialize`. Dropbox-dossier-zip
+  et GitHub-codeload déjà en place.
+- `studio/assets/repobuild.py` : `build(sources, out, cards_as, split_cards_by_type, git_init)`
+  → un dépôt par **famille** (`cards-alt` / `translations` / `playmats` / `cardbacks-don`),
+  cartes **sous-classées par type** (`Leaders/Cards/<SET>/<ID>.png` …, nom canonicalisé),
+  layout compatible import (ancêtre `Cards/` reconnu par `classify_rel`). `MANIFEST.json` +
+  `README` + `git init` par dépôt ; collisions (dernière source gagne) et non-classés
+  rapportés ; alerte au-delà de ~900 Mo.
+- CLI `studio repos build <sources…> --out DIR [--cards-as alt|translated] [--no-split]
+  [--no-git]` ; affiche la recette `git remote add … && git push` (jamais de push auto).
+- Tests : `tests/test_repobuild.py` (routage, build hors-ligne via ingest factice,
+  collisions, git init, parsing/ingest Drive). 152 verts.
+- Reste possible (non demandé) : surface UI, et crawl de **dossier** Drive via clé API.
+
 ## Chantier P9 — Publier le format « pack de decks » (contribution communautaire)
 
 Objectif : permettre à la communauté de créer et partager des packs de decks (le format

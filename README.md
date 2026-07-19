@@ -186,6 +186,33 @@ Conseil d'organisation des dépôts (P8) : les images étant volumineuses, hébe
 qu'un seul — on reste sous les limites GitHub (repos < ~1 Go) et chaque famille se met à
 jour indépendamment. Le studio gère autant de sources suivies que voulu.
 
+### Construire ces dépôts depuis tes liens (`studio repos build`)
+
+Plutôt que d'organiser les dépôts à la main, on part des liens **déjà partagés** (GitHub,
+Dropbox, Google Drive) et le studio **génère l'arborescence par famille**, prête à pousser :
+
+```bash
+studio repos build <lien-github|dropbox|drive> --out ~/optcgsim-repos --cards-as alt
+studio repos build <lien-FR> --out ~/optcgsim-repos --cards-as translated   # cartes traduites
+```
+
+Chaque fichier est classé (via `classify_rel` + `cardmeta`) et routé :
+
+- **cartes** → dépôt de la famille passée (`--cards-as alt` → `cards-alt/`, `translated` →
+  `translations/`), **sous-classées par type** : `Leaders/Cards/<SET>/<ID>.png`,
+  `Events/…`, etc. → l'import granulaire `--only-type` marche direct sur le dépôt poussé, et
+  une famille trop lourde se scinde en déplaçant un simple sous-dossier de type ;
+- `Cards/Don/` → `cardbacks-don/`, `CardBacks/` → `cardbacks-don/`, `Playmats/` + fonds →
+  `playmats/`, `TRANSLATION.txt` → `translations/`.
+
+Sources : **GitHub** (dépôt/zip) et **Dropbox** (dossier partagé → zip) sont téléchargés
+entiers ; **Google Drive** est géré pour les **fichiers/zip partagés** (« tout le monde avec
+le lien ») — un *dossier* Drive n'a pas d'export zip public, partage-le en `.zip`. Chaque
+dépôt reçoit un `git init`, un `MANIFEST.json` (comptes par type, tailles) et un `README`.
+Le studio **ne pousse rien** : il affiche la recette `git remote add … && git push` à lancer
+toi-même. Un dépôt qui dépasse ~900 Mo est signalé (scinde-le). Ces dépôts d'images restent
+**privés** (tu n'es pas l'ayant droit).
+
 ## Pilier 3 — Synchronisation multi-appareils (`studio sync`)
 
 Offline-first : SQLite local par défaut, cloud en opt-in — **même protocole** (`SyncStore`),

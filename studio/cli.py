@@ -440,6 +440,33 @@ def cmd_decks_validate_pack(args) -> int:
     return 1 if rep.failed else 0
 
 
+# --------------------------------------------------------------------------- repos
+def cmd_repos_build(args) -> int:
+    """Construit des dépôts d'images par famille depuis des sources (GitHub/Dropbox/Drive)."""
+    from .assets import repobuild
+    rep = repobuild.build(
+        args.source, Path(args.out), cards_as=args.cards_as,
+        split_cards_by_type=not args.no_split, git_init=not args.no_git,
+        on_progress=_console_progress)
+    print(rep.summary())
+    for fam, s in sorted(rep.repos.items()):
+        line = f"  • {fam}/ — {s.files} fichiers, {s.bytes // (1024*1024)} Mo"
+        if s.by_type:
+            line += " [" + ", ".join(f"{k}:{v}" for k, v in sorted(s.by_type.items())) + "]"
+        print(line)
+        if s.oversize:
+            print(f"    ⚠ dépôt > {repobuild.GITHUB_SOFT_LIMIT // (1024*1024)} Mo — "
+                  "envisage de scinder (déplace un sous-dossier de type dans un autre dépôt).")
+    if rep.collisions:
+        print(f"  ⚠ {len(rep.collisions)} collision(s) (dernière source gardée).")
+    if rep.unclassified:
+        print(f"  {len(rep.unclassified)} fichier(s) non classé(s) (ignorés).")
+    print(f"\nDépôts prêts dans {args.out}. Prochaine étape (à faire par toi) :")
+    print("  cd <dépôt> && git add -A && git commit -m init")
+    print("  git remote add origin git@github.com:<toi>/<dépôt-privé>.git && git push -u origin main")
+    return 0
+
+
 # --------------------------------------------------------------------------- sync
 def cmd_ui(args) -> int:
     from .api.server import run_ui
@@ -550,6 +577,22 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--url", default=None)
     ps.add_argument("--token", default=None)
     ps.set_defaults(func=cmd_sync)
+
+    pr = sub.add_parser("repos", help="construire des dépôts d'images par famille (à pousser)")
+    sr = pr.add_subparsers(dest="sub", required=True)
+    rb = sr.add_parser("build",
+                       help="générer les dépôts par famille depuis des sources "
+                            "(GitHub/Dropbox/Drive fichier-zip)")
+    rb.add_argument("source", nargs="+",
+                    help="une ou plusieurs sources (URL GitHub/Dropbox/Drive, zip ou dossier)")
+    rb.add_argument("--out", required=True, help="dossier racine où écrire les dépôts")
+    rb.add_argument("--cards-as", default="alt",
+                    help="famille des CARTES de ces sources : alt (défaut) | translated | <nom>")
+    rb.add_argument("--no-split", action="store_true",
+                    help="ne pas sous-classer les cartes par type (Leaders/Events/…)")
+    rb.add_argument("--no-git", action="store_true",
+                    help="ne pas exécuter git init dans chaque dépôt")
+    rb.set_defaults(func=cmd_repos_build)
 
     pc = sub.add_parser("config", help="configuration locale (token GitHub…)")
     sc = pc.add_subparsers(dest="sub", required=True)

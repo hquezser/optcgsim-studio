@@ -24,10 +24,12 @@ n'écrit RIEN dans le jeu (c'est le rôle du manager, seul détenteur des garde-
 from __future__ import annotations
 
 import hashlib
+import http.cookiejar
 import json
 import re
 import shutil
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass, field
@@ -178,6 +180,19 @@ def _safe_extract(zf: zipfile.ZipFile, dest: Path,
         on_progress("extract", i, total)
 
 
+def _materialize(archive: Path, out: Path, orig_name: str | None,
+                 on_progress: OnProgress = _noop_progress) -> Path:
+    """Rend une source téléchargée exploitable : extrait si c'est un zip, sinon dépose le
+    fichier unique (image partagée) sous son nom d'origine. Renvoie le dossier racine."""
+    if zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive) as zf:
+            _safe_extract(zf, out, on_progress=on_progress)
+        return out
+    out.mkdir(parents=True, exist_ok=True)
+    shutil.copy(archive, out / (orig_name or archive.name))
+    return out
+
+
 def _download(url: str, dest_zip: Path, timeout: float = 60.0,
              on_progress: OnProgress = _noop_progress) -> None:
     """Télécharge en streaming (1 Mo/bloc). Les dossiers communautaires complets peuvent
@@ -218,6 +233,72 @@ def _resolve_url(url: str) -> str:
     return url
 
 
+def is_drive_url(url: str) -> bool:
+    return "drive.google.com" in url or "drive.usercontent.google.com" in url
+
+
+def _drive_id(url: str) -> str | None:
+    """Extrait l'id de fichier d'un lien Google Drive (formats /file/d/<id> ou ?id=<id>)."""
+    for pat in (r"/file/d/([\w-]+)", r"[?&]id=([\w-]+)"):
+        m = re.search(pat, url)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _drive_download(file_id: str, dest: Path, timeout: float = 60.0,
+                    on_progress: OnProgress = _noop_progress) -> str | None:
+    """Télécharge un fichier Google Drive PARTAGÉ (« tout le monde avec le lien »).
+
+    Les gros fichiers passent par une page intermédiaire d'analyse antivirus : on récupère
+    le jeton `confirm` (et `uuid`) et on rejoue la requête. Un pot à cookies porte la session
+    entre les deux appels. Renvoie le nom de fichier suggéré (Content-Disposition) si connu.
+    Ne gère PAS les DOSSIERS Drive (pas d'endpoint zip public — partager un .zip)."""
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(jar),
+        urllib.request.HTTPSHandler(context=ssl_context()))
+    base = "https://drive.usercontent.google.com/download"
+    params = {"id": file_id, "export": "download"}
+
+    def _open(extra: dict | None = None):
+        q = urllib.parse.urlencode({**params, **(extra or {})})
+        req = urllib.request.Request(
+            f"{base}?{q}", headers={"User-Agent": "optcgsim-studio/0.1"})
+        return opener.open(req, timeout=timeout)   # noqa: S310 (hôte Drive fixe)
+
+    try:
+        resp = _open()
+        if "text/html" in resp.headers.get("Content-Type", ""):
+            html = resp.read().decode("utf-8", "ignore")
+            conf = re.search(r'name="confirm"\s+value="([^"]+)"', html)
+            uuid = re.search(r'name="uuid"\s+value="([^"]+)"', html)
+            extra = {"confirm": conf.group(1) if conf else "t"}
+            if uuid:
+                extra["uuid"] = uuid.group(1)
+            resp = _open(extra)
+            if "text/html" in resp.headers.get("Content-Type", ""):
+                raise PackError(
+                    "Lien Google Drive non téléchargeable en direct (dossier, accès "
+                    "restreint, ou quota). Partage un .zip en « Tout utilisateur "
+                    "disposant du lien ».")
+        cd = resp.headers.get("Content-Disposition", "")
+        m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', cd)
+        fname = urllib.parse.unquote(m.group(1)) if m else None
+        total = int(resp.headers.get("Content-Length") or 0)
+        done = 0
+        with dest.open("wb") as out:
+            while chunk := resp.read(1 << 20):
+                out.write(chunk)
+                done += len(chunk)
+                on_progress("download", done, total)
+        return fname
+    except urllib.error.URLError as e:
+        if is_cert_error(e):
+            raise PackError(CERT_FIX_HINT) from e
+        raise
+
+
 def ingest(source: str | Path, work_dir: Path,
           on_progress: OnProgress = _noop_progress) -> Path:
     """Résout une source (dossier, zip local, URL) en un dossier local extrait.
@@ -227,13 +308,18 @@ def ingest(source: str | Path, work_dir: Path,
     """
     work_dir.mkdir(parents=True, exist_ok=True)
     s = str(source)
+    if is_drive_url(s):
+        fid = _drive_id(s)
+        if not fid:
+            raise PackError("Lien Google Drive non reconnu "
+                            "(attendu .../file/d/<id> ou ?id=<id>).")
+        blob = work_dir / "download.bin"
+        fname = _drive_download(fid, blob, on_progress=on_progress)
+        return _materialize(blob, work_dir / "extracted", fname, on_progress)
     if s.lower().startswith(("http://", "https://")):
         zpath = work_dir / "download.zip"
         _download(_resolve_url(s), zpath, on_progress=on_progress)
-        out = work_dir / "extracted"
-        with zipfile.ZipFile(zpath) as zf:
-            _safe_extract(zf, out, on_progress=on_progress)
-        return out
+        return _materialize(zpath, work_dir / "extracted", None, on_progress)
     p = Path(source)
     if p.is_dir():
         return p
