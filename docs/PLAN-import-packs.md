@@ -487,6 +487,38 @@ membres sur plusieurs milliers (le CRC est vérifié par fichier).
   l'économie : `_download` appelé **une seule fois**, seul le fichier en défaut est re-fetché,
   le reste de l'archive (des milliers de fichiers sains) n'est jamais retouché. 180 verts.
 
+### (k) Fix — 403 sur un dépôt PUBLIC = rate-limit GitHub mal diagnostiqué (2026-07-19)
+
+Incident réel n°2 : après le fix (i), l'utilisateur relance sur le vrai repo FR (public) et
+obtient `FetchError: Accès GitHub refusé (401/403) — dépôt privé sans token valide…` — message
+FAUX, le dépôt est public. Vérifié en réseau réel (`urllib.error.HTTPError: HTTP Error 403:
+rate limit exceeded`) : l'API REST `api.github.com` est plafonnée à **60 requêtes/heure SANS
+authentification**, quel que soit le dépôt (public ou privé). Or `fetch_selected` faisait
+UNE requête Contents API PAR FICHIER — un dossier `FR_classique/` de plusieurs centaines de
+cartes épuise ce quota en une seule commande. `_gh_request` catchait tout 401/403 sous le même
+message « dépôt privé », sans distinguer la vraie cause.
+
+Vérifié séparément (réseau réel, sans toucher à api.github.com) : `raw.githubusercontent.com`
+(CDN) sert le contenu RÉEL (PNG confirmé par magic bytes, PAS un pointeur Git LFS — le repo FR
+n'utilise pas LFS) avec une limite bien plus généreuse, aucun en-tête `X-RateLimit-*` renvoyé,
+et fonctionne pour du contenu public sans authentification.
+
+Fix :
+- `sourcefetch._is_rate_limited(HTTPError)` : distingue un 403 de limite de requêtes (en-tête
+  `X-RateLimit-Remaining: 0`, ou phrase de raison HTTP contenant « rate limit ») d'un vrai
+  refus d'accès. Message corrigé et actionnable : configurer un token même pour un dépôt
+  PUBLIC (aucune permission particulière requise) fait passer la limite à 5000/heure.
+- `fetch_selected()` : le contenu par fichier passe désormais par `raw.githubusercontent.com`
+  EN PRIORITÉ (pas de surcoût base64, quasiment aucune limite pratique) ; repli sur l'API
+  Contents (comportement historique, inchangé) uniquement si le CDN échoue pour un chemin
+  donné (dépôt privé où le CDN ne répond pas pareil, fichier renommé…).
+- Tests : classification rate-limit vs auth réelle (en-tête ET phrase de raison), message
+  correct dans chaque cas, CDN utilisé en priorité (prouvé — l'API Contents n'est PAS appelée
+  quand le CDN réussit), repli propre vers l'API Contents si le CDN échoue (petit ET gros
+  fichier via `download_url`). 186 verts. Vérifié en réseau réel : confirmation directe du 403
+  "rate limit exceeded" sur le vrai repo, confirmation que le CDN reste disponible juste après
+  (aucun en-tête de limite), confirmation que le contenu réel (PNG, pas LFS) est bien servi.
+
 ## Chantier P9 — Publier le format « pack de decks » (contribution communautaire)
 
 Objectif : permettre à la communauté de créer et partager des packs de decks (le format

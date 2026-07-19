@@ -245,21 +245,27 @@ Sources : **Dropbox** (dossier partagé → zip) est téléchargé entier ; **Go
 géré pour les **fichiers/zip partagés** (« tout le monde avec le lien ») — un *dossier* Drive
 n'a pas d'export zip public, partage-le en `.zip`. **GitHub** est téléchargé entier PAR
 DÉFAUT, mais dès que `--path-prefix` est actif, `repos build`/`update` passent en **fetch
-sélectif** (API Tree + Contents, fichier par fichier — la même mécanique que l'import P7) :
-seuls les fichiers du périmètre sont transférés, au lieu du dépôt entier. Mesuré : jusqu'à
-98 % d'économie sur un gros dépôt scopé à un seul sous-dossier — et un fichier corrompu en
-route n'affecte plus que CE fichier (repli sur un zip monolithique = toute l'extraction
-plante). Le token GitHub configuré (`studio config set-github-token`) est réutilisé
-automatiquement pour les dépôts privés. Chaque dépôt généré reçoit un `git init`, un
-`MANIFEST.json` (comptes par type, tailles) et un `README`. Le studio **ne pousse rien** : il
-affiche la recette `git remote add … && git push` à lancer toi-même. Un dépôt qui dépasse
-~900 Mo est signalé (scinde-le). Ces dépôts d'images restent **privés** (tu n'es pas l'ayant
-droit).
+sélectif** (API Tree + `raw.githubusercontent.com` fichier par fichier — la même mécanique
+que l'import P7) : seuls les fichiers du périmètre sont transférés, au lieu du dépôt entier.
+Mesuré : jusqu'à 98 % d'économie sur un gros dépôt scopé à un seul sous-dossier — et un
+fichier corrompu en route n'affecte plus que CE fichier (repli sur un zip monolithique =
+toute l'extraction plante). Le contenu passe par le CDN `raw.githubusercontent.com`, pas
+l'API REST `api.github.com` (plafonnée à **60 requêtes/heure sans authentification**, quel
+que soit le dépôt — public ou privé ; un dossier de quelques centaines de cartes l'épuiserait
+en une seule commande) ; l'API REST ne sert plus qu'à lister l'arborescence (1 requête) et de
+repli si le CDN échoue pour un chemin. **Configure un token GitHub** même pour un dépôt
+public (`studio config set-github-token <PAT>`, aucune permission particulière requise) : ça
+fait passer la limite à 5000/heure et sécurise les commandes suivantes. Le token configuré
+est réutilisé automatiquement. Chaque dépôt généré reçoit un `git init`, un `MANIFEST.json`
+(comptes par type, tailles) et un `README`. Le studio **ne pousse rien** : il affiche la
+recette `git remote add … && git push` à lancer toi-même. Un dépôt qui dépasse ~900 Mo est
+signalé (scinde-le). Ces dépôts d'images restent **privés** (tu n'es pas l'ayant droit).
 
 **Téléchargement corrompu** (coupure réseau en cours de route, CRC invalide) : si SEULS
 quelques fichiers d'une archive GitHub sont en défaut, le studio ne rejette pas tout le
-téléchargement déjà fait — il **patche uniquement ces fichiers** (API Contents, comme le
-fetch sélectif ci-dessus) au lieu de retélécharger l'archive entière. Ce n'est que si le
+téléchargement déjà fait — il **patche uniquement ces fichiers** (même mécanique que le
+fetch sélectif ci-dessus : CDN d'abord, API Contents en repli) au lieu de retélécharger
+l'archive entière. Ce n'est que si le
 patch est impossible (source non GitHub) ou échoue à son tour que `repos build`/`update`
 retentent un téléchargement complet (3 tentatives) avant d'abandonner avec un message clair
 — plutôt qu'une trace Python brute. `--path-prefix` sur une source GitHub réduit aussi
