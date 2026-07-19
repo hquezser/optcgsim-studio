@@ -223,7 +223,8 @@ def test_build_records_log_for_update(tmp_path):
                     ingest=lambda s, wd, on_progress=None: src, git_init=False)
     log = repobuild.load_build_log(out)
     assert log == [{"sources": ["s"], "cards_as": "alt", "split_cards_by_type": True,
-                    "path_prefix": None, "lang": None}]
+                    "path_prefix": None, "lang": None,
+                    "collection_label": None, "collection_group": None}]
     # (out / ".repos-build.json") reste HORS des dépôts de famille -> jamais poussé avec eux
     assert not (out / "cards-alt" / ".repos-build.json").exists()
 
@@ -665,3 +666,95 @@ def test_ingest_gives_up_after_max_attempts_with_clear_error(tmp_path, monkeypat
     monkeypatch.setattr(packlib.time, "sleep", lambda s: None)
     with pytest.raises(packlib.PackError, match="coupure réseau"):
         packlib.ingest("https://example.com/pack.zip", tmp_path / "w")
+
+
+# ------------------------------------------------------------------ P10 (b) : collection.json
+# Génération CLI de docs/PLAN-import-packs.md, chantier P10. Volets (c) résolution distante
+# et (d) UI restent À FAIRE — voir studio/assets/collections.py pour le format consommé et
+# tests/test_collections.py pour son parsing (P10-a, déjà fait, indépendant de ce qui suit).
+def test_build_upserts_collection_entry_per_family(tmp_path):
+    src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
+    out = tmp_path / "out"
+    repobuild.build(["s"], out, cards_as="translated-fr-classic",
+                    collection_label="Cartes FR classiques", collection_group="cards",
+                    ingest=lambda s, wd, on_progress=None: src, git_init=False)
+    data = json.loads((out / "collection.json").read_text())
+    assert data["packs"] == [{"family": "translated-fr-classic", "url": "",
+                             "label": "Cartes FR classiques", "variant_group": "cards"}]
+
+
+def test_build_collection_label_defaults_to_family_name(tmp_path):
+    src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
+    out = tmp_path / "out"
+    repobuild.build(["s"], out, cards_as="alt",
+                    ingest=lambda s, wd, on_progress=None: src, git_init=False)
+    data = json.loads((out / "collection.json").read_text())
+    assert data["packs"] == [{"family": "cards-alt", "url": "", "label": "cards-alt",
+                             "variant_group": None}]
+
+
+def test_build_upserts_without_duplicating_same_family(tmp_path):
+    """Rebuild de la MÊME famille -> l'entrée est mise à jour (nouveau label), pas dupliquée."""
+    src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
+    out = tmp_path / "out"
+    ingest = lambda s, wd, on_progress=None: src
+    repobuild.build(["s"], out, cards_as="alt", collection_label="Premier nom", ingest=ingest,
+                    git_init=False)
+    repobuild.build(["s"], out, cards_as="alt", collection_label="Nom mis à jour", ingest=ingest,
+                    git_init=False)
+    data = json.loads((out / "collection.json").read_text())
+    assert len(data["packs"]) == 1
+    assert data["packs"][0]["label"] == "Nom mis à jour"
+
+
+def test_build_preserves_manually_filled_url_across_rebuilds(tmp_path):
+    """Une URL renseignée à la main (après un vrai `git push`) ne doit JAMAIS être effacée
+    par un `repos build`/`update` suivant sur la même famille."""
+    src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
+    out = tmp_path / "out"
+    ingest = lambda s, wd, on_progress=None: src
+    repobuild.build(["s"], out, cards_as="alt", ingest=ingest, git_init=False)
+
+    manifest_path = out / "collection.json"
+    data = json.loads(manifest_path.read_text())
+    data["packs"][0]["url"] = "https://github.com/hquezser/optcgsim-cards-alt"
+    manifest_path.write_text(json.dumps(data))
+
+    repobuild.build(["s"], out, cards_as="alt", collection_label="Alt-arts", ingest=ingest,
+                    git_init=False)
+    data = json.loads(manifest_path.read_text())
+    assert data["packs"][0]["url"] == "https://github.com/hquezser/optcgsim-cards-alt"
+    assert data["packs"][0]["label"] == "Alt-arts"   # le label, lui, a bien été rafraîchi
+
+
+def test_collection_label_and_group_persisted_and_replayed_by_update(tmp_path):
+    """update() doit rejouer collection_label/group SANS que l'utilisateur les retape —
+    persistés dans .repos-build.json (pas juste passés à build() une fois)."""
+    src = tmp_path / "src"
+    make_png(src / "Cards" / "OP01" / "OP01-001.png")
+    out = tmp_path / "out"
+    ingest = lambda s, wd, on_progress=None: src
+    repobuild.build(["s"], out, cards_as="alt", collection_label="Alt-arts",
+                    collection_group="cards", ingest=ingest, git_init=False)
+
+    log = repobuild.load_build_log(out)
+    assert log[0]["collection_label"] == "Alt-arts" and log[0]["collection_group"] == "cards"
+
+    # simule une nouvelle sortie de set + réécrit collection.json comme si un défaut avait
+    # effacé label/groupe -> update() doit les régénérer depuis le journal, pas les perdre.
+    make_png(src / "Cards" / "OP14" / "OP14-018.png")
+    repobuild.update(out, ingest=ingest)
+    data = json.loads((out / "collection.json").read_text())
+    assert data["packs"][0]["label"] == "Alt-arts"
+    assert data["packs"][0]["variant_group"] == "cards"
+
+
+def test_collection_file_is_visible_not_hidden(tmp_path):
+    """Contrairement à .repos-build.json (caché, sources brutes), collection.json est VISIBLE
+    -- c'est le manifeste destiné à être publié/partagé (cf. docstring repobuild + P10-c)."""
+    src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
+    out = tmp_path / "out"
+    repobuild.build(["s"], out, cards_as="alt", ingest=lambda s, wd, on_progress=None: src,
+                    git_init=False)
+    assert (out / "collection.json").exists()
+    assert not (out / "collection.json").name.startswith(".")

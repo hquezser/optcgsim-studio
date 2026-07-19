@@ -287,6 +287,13 @@ message de commit (« ajoute OP15, corrige 2 alt-arts OP14 »). Ré-exécuter `r
 directement sur un `--out` déjà construit est aussi sûr (idempotent) — `update` évite juste
 de retaper les sources.
 
+**Collections** (P10, génération seulement — EN COURS, voir `docs/PLAN-import-packs.md`) :
+`--collection-label "…"` / `--collection-group <clé>` maintiennent un `<out>/collection.json`
+VISIBLE (une entrée par famille, upsert automatique) décrivant quelles familles sont des
+variantes alternatives d'un même choix (même `--collection-group`, ex. cartes classiques vs
+full-art) et lesquelles sont complémentaires. Sert à un futur import groupé côté UI web — pas
+encore implémenté ; pour l'instant ce manifeste ne fait qu'être généré et tenu à jour côté CLI.
+
 ## Pilier 3 — Synchronisation multi-appareils (`studio sync`)
 
 Offline-first : SQLite local par défaut, cloud en opt-in — **même protocole** (`SyncStore`),

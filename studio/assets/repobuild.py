@@ -64,6 +64,10 @@ _FIXED_FAMILY = {"cardbacks": "cardbacks", "playmats": "playmats",
 
 GITHUB_SOFT_LIMIT = 900 * 1024 * 1024   # ~900 Mo : au-delà, on conseille de scinder
 _LOG_NAME = ".repos-build.json"
+# Manifeste P10 : contrairement à _LOG_NAME (caché, sources brutes, jamais partagé),
+# collection.json est VISIBLE et destiné à être publié/partagé pour un futur import groupé
+# côté UI (résolution/UI pas encore implémentées — cf. docs/PLAN-import-packs.md, P10-c).
+_COLLECTION_NAME = "collection.json"
 # Catégories que --path-prefix restreint : uniquement celles canonicalisées par id de carte
 # (donc à risque de collision de variante). translation/playmats/cardbacks/backgrounds sont
 # des assets partagés, hors sujet -> toujours inclus quel que soit le préfixe.
@@ -209,6 +213,7 @@ def _ingest_scoped(source: str, work_dir: Path, prefix: str | None, token: str |
 def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
           split_cards_by_type: bool = True, git_init: bool = True,
           path_prefix: str | None = None, lang: str | None = None, token: str | None = None,
+          collection_label: str | None = None, collection_group: str | None = None,
           work_dir: Path | None = None, ingest=packlib.ingest,
           on_progress: packlib.OnProgress = packlib._noop_progress) -> RepoBuildReport:
     """Ingère chaque source, route chaque fichier vers son dépôt de famille, écrit les dépôts.
@@ -238,6 +243,19 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
     de l'alias fixe `translations` : deux builds de variantes différentes (classique/full-art)
     avec le MÊME `lang` regroupent leur traduction dans UN seul dépôt de langue, et une future
     langue n'écrase jamais la précédente (cf. `route()`).
+
+    `collection_label`/`collection_group` (P10) : à CHAQUE build, une entrée est upsertée (par
+    famille — jamais de doublon) dans `<out_dir>/collection.json`, le manifeste VISIBLE (pas
+    caché comme `.repos-build.json`) que l'UI web pourra un jour résoudre pour importer tout un
+    groupe de dépôts liés en un geste (cf. docs/PLAN-import-packs.md, chantier P10 — la
+    résolution/UI n'est PAS ENCORE implémentée, seule la génération l'est). `collection_label`
+    est le texte affiché (défaut : le nom de famille) ; `collection_group`, s'il est fourni,
+    marque cette famille comme une VARIANTE ALTERNATIVE (radio) d'un groupe nommé — deux
+    familles du même groupe ne devraient jamais être importées TOUTES LES DEUX (ex. cartes
+    classiques vs full-art) ; sans `collection_group`, la famille est COMPLÉMENTAIRE (toujours
+    importée). L'URL du dépôt PUBLIÉ est inconnue à ce stade (le `git push` n'a pas encore eu
+    lieu) — le champ `url` est laissé vide, à remplir manuellement après coup (ou via un futur
+    `--collection-url`, non implémenté).
 
     Ré-exécutable sans risque sur un `out_dir` déjà construit (les fichiers déjà présents sont
     remplacés, pas signalés en collision — une « collision » ne désigne QUE deux sources de CE
@@ -283,8 +301,10 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
         stat.bytes = sum((out_dir / fam / rel).stat().st_size for rel in files)
         stat.by_type = _by_type_from_written(files)
         _finalize_repo(out_dir / fam, stat, rep.sources, git_init, files)
+        _upsert_collection_entry(out_dir, fam, collection_label, collection_group)
 
-    _record_build(out_dir, sources, cards_as, split_cards_by_type, path_prefix, lang)
+    _record_build(out_dir, sources, cards_as, split_cards_by_type, path_prefix, lang,
+                 collection_label, collection_group)
     return rep
 
 
@@ -306,6 +326,8 @@ def update(out_dir: Path, *, token: str | None = None, work_dir: Path | None = N
                  split_cards_by_type=e["split_cards_by_type"],
                  path_prefix=e.get("path_prefix"),   # absent dans les vieux journaux -> None
                  lang=e.get("lang"),                 # idem
+                 collection_label=e.get("collection_label"),
+                 collection_group=e.get("collection_group"),
                  token=token, work_dir=work_dir, ingest=ingest, on_progress=on_progress)
            for e in entries]
 
@@ -319,11 +341,16 @@ def load_build_log(out_dir: Path) -> list[dict]:
 
 
 def _record_build(out_dir: Path, sources: list[str], cards_as: str, split_cards_by_type: bool,
-                  path_prefix: str | None, lang: str | None) -> None:
+                  path_prefix: str | None, lang: str | None,
+                  collection_label: str | None, collection_group: str | None) -> None:
     path = Path(out_dir) / _LOG_NAME
     entries = json.loads(path.read_text()) if path.exists() else []
-    # dédup par (cards_as, split, path_prefix, lang) : deux configs qui ne diffèrent que par
-    # le préfixe ou la langue restent deux entrées distinctes, chacune rejouable par update().
+    # dédup par (cards_as, split, path_prefix, lang) — PAS collection_label/group : ce sont de
+    # la métadonnée d'AFFICHAGE sur une config déjà identifiée par les 4 champs ci-dessus, pas
+    # un axe qui distingue deux builds différents. Changer juste le libellé entre deux
+    # `repos build` MET À JOUR l'entrée existante plutôt que d'en créer une seconde.
+    # Persistés ici (pas seulement passés à build()) pour que `update()` les rejoue sans que
+    # l'utilisateur n'ait à retaper --collection-label/--collection-group à chaque fois.
     entries = [e for e in entries
               if not (e["cards_as"] == cards_as
                       and e["split_cards_by_type"] == split_cards_by_type
@@ -331,8 +358,32 @@ def _record_build(out_dir: Path, sources: list[str], cards_as: str, split_cards_
                       and e.get("lang") == lang)]
     entries.append({"sources": list(sources), "cards_as": cards_as,
                     "split_cards_by_type": split_cards_by_type,
-                    "path_prefix": path_prefix, "lang": lang})
+                    "path_prefix": path_prefix, "lang": lang,
+                    "collection_label": collection_label,
+                    "collection_group": collection_group})
     path.write_text(json.dumps(entries, indent=2, ensure_ascii=False))
+
+
+def _upsert_collection_entry(out_dir: Path, family: str, label: str | None,
+                             group: str | None) -> None:
+    """Met à jour `<out_dir>/collection.json` (P10) : une entrée PAR FAMILLE, upsert — jamais
+    de doublon même sur des `repos build` répétés pour la même famille.
+
+    `url` est laissé VIDE pour une famille nouvelle (le dépôt n'est pas encore poussé au
+    moment du build) ; si une entrée existante porte déjà une URL (remplie à la main après un
+    `git push`, ou par un futur `--collection-url` non implémenté), elle est PRÉSERVÉE — cet
+    upsert ne doit jamais effacer une URL déjà renseignée, seulement rafraîchir label/groupe.
+    """
+    path = Path(out_dir) / _COLLECTION_NAME
+    data = json.loads(path.read_text()) if path.exists() else {
+        "schema_version": 1, "name": Path(out_dir).name, "packs": []}
+    existing = next((p for p in data.get("packs", []) if p.get("family") == family), None)
+    url = existing.get("url", "") if existing else ""
+    packs = [p for p in data.get("packs", []) if p.get("family") != family]
+    packs.append({"family": family, "url": url, "label": label or family,
+                 "variant_group": group})
+    data["packs"] = packs
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
 
 _README = """# {fam} — dépôt d'images OPTCGSim (généré)

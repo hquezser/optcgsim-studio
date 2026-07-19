@@ -572,14 +572,15 @@ Effort : ~½ session (surtout de la doc + une commande validate ; le moteur exis
 
 ## Chantier P10 — Collections de packs (importer les dépôts liés d'un coup, via l'UI)
 
-**PLANIFIÉ, pas commencé.** Contexte : après P8+ (repos build), l'utilisateur a généré et
-poussé 6 dépôts GitHub privés pour un seul « look » cohérent (FR classique + full-art) :
-`optcgsim-translated-fr-classic`, `optcgsim-translated-fr-fullart`, `optcgsim-translations-fr`,
-`optcgsim-cardbacks`, `optcgsim-playmats`, `optcgsim-cards-alt`. Aujourd'hui, les récupérer
-demande **6 allers-retours manuels** dans l'UI (coller chaque URL, cocher `--follow`, valider)
-— sans rien qui explique que `translated-fr-classic` et `translated-fr-fullart` sont deux
-choix **alternatifs** du même slot (les cartes), alors que `translations-fr`/`cardbacks`/
-`playmats` sont, eux, **complémentaires** (tous à ajouter).
+**EN COURS (2026-07-19) — (a) et (b) FAITS et testés ; (c) et (d) PAS COMMENCÉS.** Contexte :
+après P8+ (repos build), l'utilisateur a généré et poussé 6 dépôts GitHub privés pour un seul
+« look » cohérent (FR classique + full-art) : `optcgsim-translated-fr-classic`,
+`optcgsim-translated-fr-fullart`, `optcgsim-translations-fr`, `optcgsim-cardbacks`,
+`optcgsim-playmats`, `optcgsim-cards-alt`. Aujourd'hui, les récupérer demande **6
+allers-retours manuels** dans l'UI (coller chaque URL, cocher `--follow`, valider) — sans rien
+qui explique que `translated-fr-classic` et `translated-fr-fullart` sont deux choix
+**alternatifs** du même slot (les cartes), alors que `translations-fr`/`cardbacks`/`playmats`
+sont, eux, **complémentaires** (tous à ajouter).
 
 ### Constat de départ (audité avant de planifier, pas supposé)
 
@@ -594,72 +595,132 @@ choix **alternatifs** du même slot (les cartes), alors que `translations-fr`/`c
   c'est l'absence d'un **regroupement** qui dise « ces N dépôts vont ensemble, voici lesquels
   sont interchangeables et lesquels s'ajoutent tous ».
 
-### (a) Format `collection.json` — décrire la constellation de dépôts
+### (a) Format `collection.json` — FAIT ✅
 
-Petit manifeste, même esprit que `deckpack.json` (P6/P9) mais pour des packs cosmétiques :
+Nouveau fichier **`studio/assets/collections.py`** (autonome, zéro dépendance, ne parle PAS au
+réseau — parse uniquement du JSON déjà obtenu, comme `deckpack.py` pour les decks) :
 
 ```json
 {
   "schema_version": 1,
   "name": "FR classique + full-art",
   "packs": [
-    {"url": "https://github.com/hquezser/optcgsim-translated-fr-classic",
+    {"family": "translated-fr-classic", "url": "https://github.com/hquezser/optcgsim-translated-fr-classic",
      "label": "Cartes FR classiques", "variant_group": "cards"},
-    {"url": "https://github.com/hquezser/optcgsim-translated-fr-fullart",
+    {"family": "translated-fr-fullart", "url": "https://github.com/hquezser/optcgsim-translated-fr-fullart",
      "label": "Cartes FR alternatives (full-art)", "variant_group": "cards"},
-    {"url": "https://github.com/hquezser/optcgsim-translations-fr", "label": "Traduction FR"},
-    {"url": "https://github.com/hquezser/optcgsim-cardbacks", "label": "Dos de carte"},
-    {"url": "https://github.com/hquezser/optcgsim-playmats", "label": "Tapis de jeu"}
+    {"family": "translations-fr", "url": "https://github.com/hquezser/optcgsim-translations-fr",
+     "label": "Traduction FR"}
   ]
 }
 ```
+API du module : `parse(dict) -> Collection`, `parse_text(str) -> Collection`,
+`load(Path) -> Collection` ; dataclasses `Collection`(`name`, `packs`, `warnings`,
+`.variant_groups()` → `{groupe: [CollectionPack]}`, `.standalone_packs()`, `.summary()`) et
+`CollectionPack`(`url`, `label`, `variant_group`, `family`). `family` est écrit par
+`repobuild` (clé d'upsert) mais ignoré à la consommation. `SCHEMA_VERSION=1`, même politique
+de compat ascendante que `deckpack` (P9) : version future = avertissement, jamais un échec.
+`url` vide ou manquant → `CollectionError` (un pack sans URL n'est simplement pas résolvable).
+
 Deux entrées qui partagent le même `variant_group` sont des ALTERNATIVES (un seul choix,
 présenté en radio) ; toute entrée sans `variant_group` est complémentaire (case à cocher,
 cochée par défaut). Pas de nouvelle logique de collision à l'application : le radio résout
 le choix AU MOMENT DE L'IMPORT (un seul des deux ajouté), donc le comportement existant
 « dernier pack appliqué gagne » (README) n'a jamais à arbitrer entre les deux.
 
-### (b) Génération côté mainteneur (CLI, `repos build`/`repos update`)
+Tests : `tests/test_collections.py` (10 tests — parsing, groupes vs autonomes, label par
+défaut, erreurs `packs` manquant/vide, entrée sans url, version future/courante,
+`parse_text`/`load` fichier, JSON invalide, `summary()`).
 
-`repos build` gagne des options optionnelles `--collection-label "…"` et `--collection-group
-<clé>` ; à chaque build, upsert (par famille) d'une entrée dans `<out_dir>/collection.json`
-(fichier VISIBLE, à côté de `.repos-build.json` — celui-ci reste cependant le seul à contenir
-les sources brutes ; `collection.json` ne référence que les URLs GitHub PUBLIÉES, à remplir/
-corriger manuellement après le premier `git push` si l'URL du dépôt final diffère). Reste
-CLI-only (cf. [[studio-ui-vs-maintainer-boundary]] : produire le manifeste est un geste de
-mainteneur, pas une action end-user).
+### (b) Génération côté mainteneur (CLI, `repos build`/`repos update`) — FAIT ✅
 
-### (c) Import de collection — UI (end-user)
+`studio/assets/repobuild.py` :
+- `build()` gagne deux paramètres `collection_label: str | None` et
+  `collection_group: str | None` (mots-clés, après `token`).
+- Nouvelle fonction `_upsert_collection_entry(out_dir, family, label, group)` : upsert **par
+  famille** dans `<out_dir>/collection.json` (constante `_COLLECTION_NAME`) — jamais de
+  doublon sur des builds répétés de la même famille. `url` est laissée VIDE pour une famille
+  NOUVELLE (le dépôt n'est pas encore poussé au moment du build) ; si une entrée existante a
+  déjà une URL (remplie à la main après un `git push`), elle est **préservée** — l'upsert ne
+  rafraîchit QUE label/groupe, jamais l'URL déjà renseignée.
+- `collection_label`/`collection_group` sont **persistés dans `.repos-build.json`** (pas
+  seulement passés à `build()` une fois) : `_record_build()`/`load_build_log()`/`update()`
+  les portent désormais tous les trois, pour qu'un `studio repos update` ultérieur les rejoue
+  SANS que l'utilisateur n'ait à les retaper. Ils ne font PAS partie de la clé de dédup du
+  journal (ce sont des métadonnées d'affichage sur une config déjà identifiée par
+  `cards_as`/`split_cards_by_type`/`path_prefix`/`lang` — changer juste le libellé met à jour
+  l'entrée existante, n'en crée pas une seconde).
+- `collection.json` est un fichier **VISIBLE** (contrairement à `.repos-build.json`, caché) —
+  c'est le manifeste destiné à être publié/partagé une fois (c) implémenté.
+- CLI (`studio/cli.py`) : `studio repos build … --collection-label "…" --collection-group
+  <clé>` (`cmd_repos_build`, parser dans `build_parser()`). Message affiché en fin de build :
+  rappelle de compléter les URLs dans `collection.json` après le `git push`.
 
-Nouvelle section UI « Importer une collection » : coller une URL de manifeste (ou upload du
-fichier) → `POST /api/collections/resolve` (nouvelle route, fetch côté serveur — réutilise le
-token déjà configuré si le manifeste est sur un hébergement qui en a besoin) → rendu : groupes
-`variant_group` en radio, entrées seules en checkbox (cochées par défaut) → bouton unique
-« Importer la sélection » qui appelle `POST /api/packs/add` en série pour chaque pack
-sélectionné (réutilise TEL QUEL le flux de job existant — juste plusieurs jobs enchaînés avec
-une barre de progression globale N/M), pas de nouvelle route d'ajout.
+Tests : dans `tests/test_repobuild.py`, section « P10 (b) : collection.json » (7 tests —
+upsert par famille avec label/groupe, défaut = nom de famille, pas de doublon sur rebuild,
+URL manuelle jamais écrasée, label/groupe persistés ET rejoués par `update()`, fichier
+visible pas caché). Validé aussi en CLI réelle (voir commit associé).
 
-### (d) Tests à couvrir
+**Suite complète : 204 tests verts** (`/usr/local/bin/python3 -m pytest -q` depuis
+`~/playground/optcgsim-studio`).
 
-- Parsing `collection.json` (radio group vs checkbox, `schema_version` future = avertissement,
-  même pattern que `deckpack`/`repos build`).
-- `repos build --collection-label/--collection-group` : upsert par famille, ne duplique pas.
-- `/api/collections/resolve` : réutilise le token, erreurs lisibles (même style que
-  `/api/packs/preview`).
-- UI : sélection d'un radio par groupe suffit à activer l'import ; les compléments sont
-  cochés par défaut ; N jobs lancés = N packs sélectionnés (pas plus, pas moins).
+### (c) Import de collection — UI (end-user) — PAS COMMENCÉ ❌
 
-### Décisions à trancher avant d'implémenter
+**C'est ICI que reprendre.** Objectif : une section UI « Importer une collection » qui
+consomme le `collection.json` produit par (b) et enchaîne les imports via le flux
+`packs/add` EXISTANT (aucune nouvelle route d'ajout, aucune nouvelle logique d'application).
 
-- Où vit `collection.json` publié : dans l'un des 6 dépôts (lequel ?), un dépôt dédié
-  (`optcgsim-collections`, écho de P9), ou un simple gist personnel ? Vu que ces dépôts sont
-  **privés** (pas destinés à la communauté pour l'instant), un gist privé ou un fichier local
-  uploadé dans l'UI suffit largement — pas besoin d'un 7ᵉ dépôt.
-- `--for-deck` existe déjà côté API/CLI mais n'a pas de contrôle dans l'UI (gap mineur trouvé
-  pendant l'audit, indépendant de P10 — à traiter séparément si besoin).
+Design à suivre (déjà arrêté, pas à re-décider) :
+1. **Nouvelle route API** `POST /api/collections/resolve` (`studio/api/server.py`, à côté de
+   `POST /api/packs/preview` (`server.py:398-400,166-189`) — même style : body `{source: str}`
+   (URL du manifeste, ou chemin local si upload), résout côté SERVEUR (jamais le navigateur —
+   réutilise `Config().github_token()` comme tout le reste si l'hébergement du manifeste en a
+   besoin), renvoie soit une `Collection` sérialisée (`{name, packs: [{url, label,
+   variant_group}], warnings}`), soit une erreur JSON lisible (même style que les autres
+   routes : le message de `CollectionError` doit arriver TEL QUEL au toast, pas générique).
+   Réutiliser `studio.assets.collections.parse_text()` (déjà FAIT, (a)) pour le parsing ; il
+   ne reste qu'à écrire le FETCH de l'URL (probablement `packlib._download`/`urllib` déjà
+   présents dans le module, ou un simple `urllib.request` avec le `ssl_context()` du projet —
+   ne pas réinventer, réutiliser `studio/nettls.py`).
+2. **Nouvelle section UI** dans `studio/api/static/index.html`, à côté de la section
+   « Ajouter un thème/pack » (`index.html:90-128`) : un champ URL/upload → bouton
+   « Analyser la collection » → appelle la route ci-dessus → rendu :
+   - pour chaque groupe de `variant_groups()` : un groupe de boutons radio (labels des packs
+     du groupe), un seul sélectionnable ;
+   - pour chaque pack de `standalone_packs()` : une case à cocher, cochée par défaut ;
+   - un bouton unique « Importer la sélection ».
+3. **Import** : au clic, pour CHAQUE pack sélectionné (un radio par groupe + toutes les cases
+   cochées), appeler `POST /api/packs/add` **séquentiellement** — réutiliser TEL QUEL
+   `addSource()`/`pollJob()` (`index.html:332-346,273`), juste dans une boucle avec un
+   affichage de progression globale (« pack N/M : <label> »). PAS de nouvelle route d'ajout,
+   PAS de nouvelle logique de job — c'est le même `start_add_job`/`JobManager` que l'ajout
+   simple, appelé plusieurs fois d'affilée.
+4. Gap mineur trouvé pendant l'audit de (a)/(b), INDÉPENDANT de P10 : `--for-deck` existe déjà
+   côté API/CLI (`server.py:133-164,191-201,404-407`, clé `for_decks`) mais n'a **aucun**
+   contrôle dans l'UI — à ajouter séparément si besoin, pas bloquant pour (c).
 
-Effort estimé : ~1 session (format + génération CLI + route de résolution + UI radio/checkbox
-+ enchaînement de jobs existants).
+### (d) Tests à couvrir pour (c) — PAS COMMENCÉ ❌
+
+- `/api/collections/resolve` : parse un manifeste valide, réutilise le token, message
+  d'erreur lisible (URL invalide, manifeste malformé, host injoignable) — même style de test
+  que les routes `/api/packs/*` existantes (`tests/test_api.py`).
+- UI (test manuel via `preview_start`/`Playwright`-like tools, ou test JS si le projet en a —
+  vérifier ; sinon documenter le test manuel exact à exécuter) : sélectionner un radio par
+  groupe suffit à activer l'import ; les compléments sont cochés par défaut ; N jobs lancés =
+  N packs sélectionnés (pas plus, pas moins).
+
+### Décisions déjà tranchées (ne pas re-débattre)
+
+- Où vit `collection.json` publié : dans l'un des 6 dépôts, un dépôt dédié, ou un gist privé ?
+  → **Pas de 7ᵉ dépôt.** Ces dépôts sont **privés** (pas destinés à la communauté pour
+  l'instant) : un gist privé ou un simple upload de fichier local dans l'UI suffit. Ne pas
+  ajouter de dépôt dédié type `optcgsim-collections` sans que l'utilisateur le redemande.
+- `repos build` reste **CLI-only** — produire le manifeste est un geste de mainteneur, pas une
+  action end-user (cf. [[studio-ui-vs-maintainer-boundary]]). Seule la CONSOMMATION (c) est
+  dans l'UI.
+
+Effort restant estimé : ~½ session (route de résolution + UI radio/checkbox + enchaînement de
+jobs déjà existants — le format et sa génération, la partie la plus incertaine, sont FAITS).
 
 ## Garde-fous inchangés
 
@@ -682,7 +743,7 @@ annoncée), jamais automatiquement en arrière-plan hors `packs update`.
 | P7 | import sélectif (fetch ciblé GitHub + filtre disque partout) | ~1-1,5 session | ✅ fait (a→e, token privé inclus) |
 | P8 | dépôt(s) privé(s) + import granulaire par type de carte | ~½ session | ✅ fait (card_types, --only-type, DON, UI par type ; multi-dépôts documenté) |
 | P9 | publier le format deckpack (spec + validate contributeur) | ~½ session | ✅ fait (repo optcgsim-deckpacks : spec+schema+exemple+validate CI ; studio: schema_version + validate-pack) |
-| P10 | collections de packs (import multi-dépôts guidé, variantes vs complémentaires) | ~1 session | 📋 planifié (voir chantier P10 — format + génération CLI + route de résolution + UI) |
+| P10 | collections de packs (import multi-dépôts guidé, variantes vs complémentaires) | ~1 session | 🟡 EN COURS — (a) format + (b) génération CLI **faits** (204 tests verts) ; (c) route API + UI et (d) leurs tests **restent à faire**, voir chantier P10 |
 
 Décisions ouvertes historiques (résolues) :
 - `Custom Cards`/`Extra Alts` (Dropbox) : le rapport « non-classés » de P1 les révèle.

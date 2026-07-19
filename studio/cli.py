@@ -478,12 +478,15 @@ def cmd_repos_build(args) -> int:
         args.source, Path(args.out), cards_as=args.cards_as,
         split_cards_by_type=not args.no_split, git_init=not args.no_git,
         path_prefix=args.path_prefix, lang=args.lang, token=Config().github_token(),
+        collection_label=args.collection_label, collection_group=args.collection_group,
         on_progress=_console_progress)
     _print_repo_report(rep, repobuild)
     print(f"\nDépôts prêts dans {args.out}. Prochaine étape (à faire par toi) :")
     print("  cd <dépôt> && git add -A && git commit -m init")
     print("  git remote add origin git@github.com:<toi>/<dépôt-privé>.git && git push -u origin main")
     print(f"\nÀ chaque sortie de set : studio repos update --out {args.out}")
+    print(f"Après le push, complète les URLs dans {args.out}/collection.json "
+         "(import groupé — UI pas encore disponible, cf. chantier P10 du plan)")
     return 0
 
 
@@ -639,6 +642,16 @@ def build_parser() -> argparse.ArgumentParser:
                          "variantes d'art (classique/full-art) ou deux langues partageant le "
                          "même alias écraseraient le même TRANSLATION.txt ; --lang fr regroupe "
                          "toutes les variantes d'une langue dans un seul dépôt de traduction.")
+    rb.add_argument("--collection-label", default=None,
+                    help="[P10, génération seulement — pas encore d'import via l'UI] libellé "
+                         "affiché pour cette famille dans <out>/collection.json (défaut : le "
+                         "nom de la famille). Persisté : pas besoin de le retaper à chaque "
+                         "`repos update`.")
+    rb.add_argument("--collection-group", default=None,
+                    help="[P10, génération seulement] marque cette famille comme une VARIANTE "
+                         "ALTERNATIVE de ce groupe nommé (ex. --collection-group cards pour "
+                         "classique ET full-art) — un seul pack du groupe devrait être importé, "
+                         "jamais tous. Omis = famille complémentaire (toujours importée).")
     rb.set_defaults(func=cmd_repos_build)
 
     ru = sr.add_parser("update",
