@@ -28,6 +28,7 @@ import http.cookiejar
 import json
 import re
 import shutil
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -62,6 +63,21 @@ _STRIP_SUFFIXES = ("_OVERRIDE", "_override", "_alt", "_ALT", "_v2", "_V2", "_ful
 
 class PackError(Exception):
     pass
+
+
+# Un gros dossier communautaire (plusieurs centaines de Mo à quelques Go) transféré en un
+# seul zip monolithique est exposé à une corruption réseau ponctuelle en cours de route (CRC
+# invalide sur UN membre, alors que le download a semblé se terminer normalement) — rencontré
+# en usage réel sur un dépôt FR de 2,2 Go. On retente le téléchargement en entier (le seul
+# recours possible : on ne peut pas reprendre un zip partiellement corrompu) avant d'abandonner
+# avec un message clair plutôt qu'une trace Python brute.
+_MAX_DOWNLOAD_ATTEMPTS = 3
+_DOWNLOAD_RETRY_HINT = (
+    "Échec du téléchargement après {n} tentatives — probablement une coupure réseau "
+    "(CRC-32 invalide ou connexion interrompue) sur un gros fichier. Réessaie, ou vérifie "
+    "ta connexion. Pour un dépôt GitHub, `--path-prefix` réduit fortement le volume "
+    "transféré (fetch sélectif, fichier par fichier) et limite l'exposition à ce problème."
+)
 
 
 @dataclass
@@ -314,12 +330,31 @@ def ingest(source: str | Path, work_dir: Path,
             raise PackError("Lien Google Drive non reconnu "
                             "(attendu .../file/d/<id> ou ?id=<id>).")
         blob = work_dir / "download.bin"
-        fname = _drive_download(fid, blob, on_progress=on_progress)
-        return _materialize(blob, work_dir / "extracted", fname, on_progress)
+        last_err: Exception | None = None
+        for attempt in range(1, _MAX_DOWNLOAD_ATTEMPTS + 1):
+            try:
+                fname = _drive_download(fid, blob, on_progress=on_progress)
+                return _materialize(blob, work_dir / "extracted", fname, on_progress)
+            except (urllib.error.URLError, zipfile.BadZipFile) as e:
+                last_err = e
+                if attempt == _MAX_DOWNLOAD_ATTEMPTS:
+                    raise PackError(
+                        _DOWNLOAD_RETRY_HINT.format(n=_MAX_DOWNLOAD_ATTEMPTS)) from last_err
+                time.sleep(2 * attempt)
     if s.lower().startswith(("http://", "https://")):
         zpath = work_dir / "download.zip"
-        _download(_resolve_url(s), zpath, on_progress=on_progress)
-        return _materialize(zpath, work_dir / "extracted", None, on_progress)
+        url = _resolve_url(s)
+        last_err = None
+        for attempt in range(1, _MAX_DOWNLOAD_ATTEMPTS + 1):
+            try:
+                _download(url, zpath, on_progress=on_progress)
+                return _materialize(zpath, work_dir / "extracted", None, on_progress)
+            except (urllib.error.URLError, zipfile.BadZipFile) as e:
+                last_err = e
+                if attempt == _MAX_DOWNLOAD_ATTEMPTS:
+                    raise PackError(
+                        _DOWNLOAD_RETRY_HINT.format(n=_MAX_DOWNLOAD_ATTEMPTS)) from last_err
+                time.sleep(2 * attempt)
     p = Path(source)
     if p.is_dir():
         return p

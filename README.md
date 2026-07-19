@@ -241,13 +241,25 @@ builds ci-dessus, leur `TRANSLATION.txt` converge dans un seul dépôt `translat
 dupliqué par variante d'art) ; une langue future (`--lang es`) va dans `translations-es/`,
 sans jamais toucher au FR.
 
-Sources : **GitHub** (dépôt/zip) et **Dropbox** (dossier partagé → zip) sont téléchargés
-entiers ; **Google Drive** est géré pour les **fichiers/zip partagés** (« tout le monde avec
-le lien ») — un *dossier* Drive n'a pas d'export zip public, partage-le en `.zip`. Chaque
-dépôt reçoit un `git init`, un `MANIFEST.json` (comptes par type, tailles) et un `README`.
-Le studio **ne pousse rien** : il affiche la recette `git remote add … && git push` à lancer
-toi-même. Un dépôt qui dépasse ~900 Mo est signalé (scinde-le). Ces dépôts d'images restent
-**privés** (tu n'es pas l'ayant droit).
+Sources : **Dropbox** (dossier partagé → zip) est téléchargé entier ; **Google Drive** est
+géré pour les **fichiers/zip partagés** (« tout le monde avec le lien ») — un *dossier* Drive
+n'a pas d'export zip public, partage-le en `.zip`. **GitHub** est téléchargé entier PAR
+DÉFAUT, mais dès que `--path-prefix` est actif, `repos build`/`update` passent en **fetch
+sélectif** (API Tree + Contents, fichier par fichier — la même mécanique que l'import P7) :
+seuls les fichiers du périmètre sont transférés, au lieu du dépôt entier. Mesuré : jusqu'à
+98 % d'économie sur un gros dépôt scopé à un seul sous-dossier — et un fichier corrompu en
+route n'affecte plus que CE fichier (repli sur un zip monolithique = toute l'extraction
+plante). Le token GitHub configuré (`studio config set-github-token`) est réutilisé
+automatiquement pour les dépôts privés. Chaque dépôt généré reçoit un `git init`, un
+`MANIFEST.json` (comptes par type, tailles) et un `README`. Le studio **ne pousse rien** : il
+affiche la recette `git remote add … && git push` à lancer toi-même. Un dépôt qui dépasse
+~900 Mo est signalé (scinde-le). Ces dépôts d'images restent **privés** (tu n'es pas l'ayant
+droit).
+
+**Téléchargement corrompu** (coupure réseau en cours de route, CRC invalide) : `repos
+build`/`update` retentent automatiquement (3 tentatives) avant d'abandonner avec un message
+clair — plutôt qu'une trace Python brute. `--path-prefix` sur une source GitHub (fetch
+sélectif ci-dessus) réduit aussi fortement l'exposition à ce problème sur les gros dépôts.
 
 **Mettre à jour à chaque sortie de set**, sans retaper les liens :
 

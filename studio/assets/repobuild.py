@@ -176,9 +176,39 @@ def _iter_files(root: Path):
             yield p
 
 
+def _in_prefix_scope(rel_str: str, cat: str, prefix: str | None) -> bool:
+    """True si ce fichier doit être conservé compte tenu de `path_prefix` — ne restreint que
+    les catégories à risque de collision de variante (cf. `build()`)."""
+    if not prefix or cat not in _PREFIX_SCOPED_CATEGORIES:
+        return True
+    return rel_str == prefix or rel_str.startswith(prefix + "/")
+
+
+def _ingest_scoped(source: str, work_dir: Path, prefix: str | None, token: str | None,
+                   ingest, on_progress: packlib.OnProgress) -> Path:
+    """Ingère UNE source, en tentant d'abord un fetch SÉLECTIF quand `prefix` est actif et que
+    la source est explorable à distance (GitHub, cf. sourcefetch) — pour ne télécharger que ce
+    qui sera gardé au lieu du dépôt entier (measuré ailleurs : 98 % d'économie). Repli sur
+    `ingest` (téléchargement complet) si la source n'est pas explorable, si l'exploration
+    échoue, ou si `prefix` n'est pas fourni (rien à économiser : tout serait gardé de toute
+    façon)."""
+    if prefix:
+        from . import sourcefetch   # import local : évite un cycle, coût nul si non utilisé
+        try:
+            remote = sourcefetch.list_remote_files(source, token=token)
+        except sourcefetch.FetchError:
+            remote = None   # exploration impossible -> repli téléchargement complet
+        if remote is not None:
+            kept = [rf.path for rf in remote
+                    if _in_prefix_scope(rf.path, packlib.classify_rel(rf.path)[0], prefix)]
+            return sourcefetch.fetch_selected(source, kept, work_dir / "selected",
+                                              token=token, on_progress=on_progress)
+    return ingest(source, work_dir, on_progress=on_progress)
+
+
 def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
           split_cards_by_type: bool = True, git_init: bool = True,
-          path_prefix: str | None = None, lang: str | None = None,
+          path_prefix: str | None = None, lang: str | None = None, token: str | None = None,
           work_dir: Path | None = None, ingest=packlib.ingest,
           on_progress: packlib.OnProgress = packlib._noop_progress) -> RepoBuildReport:
     """Ingère chaque source, route chaque fichier vers son dépôt de famille, écrit les dépôts.
@@ -194,6 +224,15 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
     Lancer un `build()` par variante, avec un `cards_as` distinct (ex. "translated" puis
     "translated-alt") et un `path_prefix` qui scope chacun à son sous-dossier, les préserve
     toutes les deux — chacune dans sa famille.
+
+    Quand `path_prefix` est actif ET la source est un dépôt GitHub explorable (cf.
+    `sourcefetch`), on ne TÉLÉCHARGE que les fichiers qui seraient gardés (fetch sélectif,
+    fichier par fichier) au lieu du dépôt entier — un gros dépôt (plusieurs Go) scopé à un
+    sous-dossier ne coûte alors qu'une fraction de la bande passante, et chaque fichier étant
+    transféré indépendamment, une corruption réseau sur l'un n'affecte pas les autres (contre
+    un unique zip monolithique où une corruption au milieu fait échouer TOUTE l'extraction).
+    `token` : PAT GitHub pour un dépôt privé (repli silencieux sur le téléchargement complet
+    si la source n'est pas explorable ou si `path_prefix` n'est pas fourni).
 
     `lang`, indépendant de `cards_as`, route la traduction vers `translations-<lang>` au lieu
     de l'alias fixe `translations` : deux builds de variantes différentes (classique/full-art)
@@ -212,7 +251,7 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
     prefix = path_prefix.strip("/\\").replace("\\", "/") if path_prefix else None
 
     for si, src in enumerate(sources):
-        root = ingest(src, work_dir / f"src{si}", on_progress=on_progress)
+        root = _ingest_scoped(src, work_dir / f"src{si}", prefix, token, ingest, on_progress)
         for f in _iter_files(root):
             rel = f.relative_to(root)
             rel_str = str(rel).replace("\\", "/")
@@ -220,9 +259,10 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
             # le préfixe ne scope QUE les catégories à risque de collision de variante
             # (cards/don, canonicalisées par id) ; le reste (traduction, tapis, dos…) est un
             # asset partagé, hors du problème que --path-prefix résout, donc toujours inclus —
-            # sinon un TRANSLATION.txt à la racine serait exclu par CHAQUE build scopé.
-            if (prefix and cat in _PREFIX_SCOPED_CATEGORIES
-                    and not (rel_str == prefix or rel_str.startswith(prefix + "/"))):
+            # sinon un TRANSLATION.txt à la racine serait exclu par CHAQUE build scopé. (Si le
+            # fetch sélectif ci-dessus a déjà tourné, ce test est un no-op — tout ce qui est
+            # sur disque est déjà dans le périmètre.)
+            if not _in_prefix_scope(rel_str, cat, prefix):
                 rep.excluded_by_prefix += 1
                 continue
             fam, target_rel = route(cat, cid, f.name, cards_as, split_cards_by_type, lang)
@@ -248,11 +288,15 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
     return rep
 
 
-def update(out_dir: Path, *, work_dir: Path | None = None, ingest=packlib.ingest,
+def update(out_dir: Path, *, token: str | None = None, work_dir: Path | None = None,
+          ingest=packlib.ingest,
           on_progress: packlib.OnProgress = packlib._noop_progress) -> list[RepoBuildReport]:
     """Rejoue tous les `build()` déjà lancés sous `out_dir` (mêmes sources, mêmes options),
     sans redemander les liens. Un rapport par configuration enregistrée (donc par jeu de
-    familles produit) ; chaque `RepoStat` porte le diff depuis le build précédent."""
+    familles produit) ; chaque `RepoStat` porte le diff depuis le build précédent.
+
+    `token` (PAT GitHub) n'est PAS lu depuis le journal (jamais persisté, c'est un secret) —
+    à repasser explicitement à chaque appel si les sources en ont besoin (dépôt privé)."""
     entries = load_build_log(out_dir)
     if not entries:
         raise packlib.PackError(
@@ -262,7 +306,7 @@ def update(out_dir: Path, *, work_dir: Path | None = None, ingest=packlib.ingest
                  split_cards_by_type=e["split_cards_by_type"],
                  path_prefix=e.get("path_prefix"),   # absent dans les vieux journaux -> None
                  lang=e.get("lang"),                 # idem
-                 work_dir=work_dir, ingest=ingest, on_progress=on_progress)
+                 token=token, work_dir=work_dir, ingest=ingest, on_progress=on_progress)
            for e in entries]
 
 

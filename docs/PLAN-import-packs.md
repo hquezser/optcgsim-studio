@@ -429,6 +429,38 @@ langue partageant l'alias `translated` se disputaient déjà le même fichier.
   dépôt de langue, langues distinctes jamais confondues, journal + replay. 169 verts. Validé
   en CLI réel avec les noms exacts de l'utilisateur (`FR_classique`/`FR_full_art`).
 
+### (i) Fix — `repos build` téléchargeait tout le dépôt même avec `--path-prefix` (2026-07-19)
+
+Incident réel de l'utilisateur : `repos build` sur le vrai repo FR (`Sparklight-TL/
+OPTCGSim_FR`, 2,2 Go, 2943 fichiers) avec `--path-prefix FR_classique` a planté à 14 % de
+l'extraction : `zipfile.BadZipFile: Bad CRC-32`. Cause racine double :
+
+1. **Gaspillage** : `path_prefix` ne filtrait qu'APRÈS extraction — le dépôt ENTIER était
+   téléchargé et extrait, même en ne gardant qu'une fraction. Or `sourcefetch` (P7) sait déjà
+   faire un fetch sélectif fichier-par-fichier sur GitHub (mesuré : 98 % d'économie) — jamais
+   branché sur `repobuild`.
+2. **Fragilité** : un zip monolithique de plusieurs Go expose une corruption réseau ponctuelle
+   (CRC invalide sur un membre) qui fait échouer TOUTE l'extraction, sans retry ni message
+   clair (trace Python brute).
+
+Fix :
+- `repobuild._ingest_scoped()` : quand `path_prefix` est actif ET la source est un dépôt
+  GitHub explorable, liste les fichiers distants (`sourcefetch.list_remote_files`), calcule le
+  sous-ensemble à garder avec la MÊME logique que le filtre post-extraction
+  (`_in_prefix_scope`, factorisée), et ne télécharge QUE ceux-là
+  (`sourcefetch.fetch_selected`). Repli sur `ingest()` complet si la source n'est pas
+  explorable (Dropbox, Drive, zip/dossier local) ou si `path_prefix` n'est pas fourni (rien à
+  économiser). `build(..., token=...)` : PAT GitHub pour dépôt privé, jamais persisté dans
+  `.repos-build.json` (secret) — repassé explicitement à chaque `update()`. CLI : les deux
+  commandes réutilisent automatiquement `Config().github_token()` (comme `packs add`).
+- `packlib.ingest()` : retry automatique (3 tentatives, backoff) sur `BadZipFile`/`URLError`
+  pour tout téléchargement zip (GitHub complet, Dropbox, Drive) — un échec après 3 tentatives
+  lève un `PackError` avec un message clair plutôt qu'une trace Python.
+- Tests : fetch sélectif déclenché avec prefix+GitHub (seuls les fichiers du périmètre sont
+  TÉLÉCHARGÉS, pas juste filtrés après coup), token propagé, repli sur source non explorable,
+  pas de fetch sélectif sans préfixe, retry réussi puis retry épuisé. 175 verts. Réseau réel
+  vérifié (API Tree GitHub répond correctement depuis cet environnement).
+
 ## Chantier P9 — Publier le format « pack de decks » (contribution communautaire)
 
 Objectif : permettre à la communauté de créer et partager des packs de decks (le format

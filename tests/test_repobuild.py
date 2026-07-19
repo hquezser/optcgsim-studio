@@ -3,6 +3,7 @@ génération hors-ligne (ingest factice), collisions, non-classés, et parsing/i
 
 import json
 import struct
+import zipfile
 import zlib
 from pathlib import Path
 
@@ -399,3 +400,135 @@ def test_ingest_drive_single_png(tmp_path, monkeypatch):
     monkeypatch.setattr(packlib, "_drive_download", fake_dl)
     out = packlib.ingest("https://drive.google.com/file/d/ID/view", tmp_path / "w")
     assert (out / "OP01-001.png").is_file()
+
+
+# ------------------------------------------------------------------ P8+ : fetch sélectif GitHub
+# (build() télécharge par fichier au lieu du zip entier quand path_prefix scope un dépôt
+# GitHub explorable — évite de retélécharger un dépôt de plusieurs Go pour n'en garder qu'une
+# fraction, et réduit l'exposition à une corruption réseau en cours de route, cf. l'incident
+# réel : "Bad CRC-32" au milieu de l'extraction d'un zip FR de 2,2 Go.)
+def test_build_uses_selective_fetch_when_github_and_prefix(tmp_path, monkeypatch):
+    from studio.assets import sourcefetch
+    remote = [sourcefetch.RemoteFile("FR_classique/OP01/OP01-001_OVERRIDE.png", 100),
+              sourcefetch.RemoteFile("FR_alt/OP01/OP01-001_alt.png", 100),
+              sourcefetch.RemoteFile("TRANSLATION.txt", 10)]
+    monkeypatch.setattr(sourcefetch, "list_remote_files", lambda url, token=None: remote)
+    fetched = {}
+
+    def fake_fetch(url, paths, dest, token=None, on_progress=None):
+        fetched["paths"] = sorted(paths)
+        for p in paths:
+            (Path(dest) / p).parent.mkdir(parents=True, exist_ok=True)
+            if p.endswith(".txt"):
+                (Path(dest) / p).write_text("Key=Val\n")
+            else:
+                make_png(Path(dest) / p)
+        return Path(dest)
+
+    monkeypatch.setattr(sourcefetch, "fetch_selected", fake_fetch)
+
+    out = tmp_path / "out"
+    rep = repobuild.build(["https://github.com/o/r"], out, cards_as="translated",
+                          path_prefix="FR_classique", git_init=False)
+    # seuls les fichiers du périmètre (FR_classique + l'asset partagé) ont été TÉLÉCHARGÉS —
+    # FR_alt/OP01-001_alt.png n'a jamais quitté GitHub, pas juste filtré après coup.
+    assert fetched["paths"] == ["FR_classique/OP01/OP01-001_OVERRIDE.png", "TRANSLATION.txt"]
+    assert (out / "translations" / "Leaders" / "Cards" / "OP01" / "OP01-001.png").is_file()
+    assert (out / "translations" / "TRANSLATION.txt").is_file()
+
+
+def test_build_passes_token_to_selective_fetch(tmp_path, monkeypatch):
+    from studio.assets import sourcefetch
+    remote = [sourcefetch.RemoteFile("FR_classique/OP01/OP01-001_OVERRIDE.png", 100)]
+    seen_tokens = {}
+
+    def fake_list(url, token=None):
+        seen_tokens["list"] = token
+        return remote
+
+    def fake_fetch(url, paths, dest, token=None, on_progress=None):
+        seen_tokens["fetch"] = token
+        for p in paths:
+            make_png(Path(dest) / p)
+        return Path(dest)
+
+    monkeypatch.setattr(sourcefetch, "list_remote_files", fake_list)
+    monkeypatch.setattr(sourcefetch, "fetch_selected", fake_fetch)
+    repobuild.build(["https://github.com/o/r"], tmp_path / "out", cards_as="translated",
+                    path_prefix="FR_classique", token="ghp_secret", git_init=False)
+    assert seen_tokens == {"list": "ghp_secret", "fetch": "ghp_secret"}
+
+
+def test_build_falls_back_to_full_ingest_when_source_not_explorable(tmp_path, monkeypatch):
+    """Dropbox (et tout ce qui n'est pas github.com) : list_remote_files renvoie None ->
+    repli sur `ingest` complet, comme avant l'ajout du fetch sélectif."""
+    from studio.assets import sourcefetch
+    monkeypatch.setattr(sourcefetch, "list_remote_files", lambda url, token=None: None)
+    # préfixe qui matche réellement le contenu (Cards/OP01/...), pour vérifier que le
+    # fallback ingest() COMPLET s'est bien produit (le fichier local est présent et gardé),
+    # pas que le prefix a tout filtré de toute façon.
+    src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
+    rep = repobuild.build(["https://dropbox.com/x"], tmp_path / "out", cards_as="alt",
+                          path_prefix="Cards",
+                          ingest=lambda s, wd, on_progress=None: src, git_init=False)
+    assert rep.repos["cards-alt"].files == 1
+
+
+def test_build_without_path_prefix_never_calls_selective_fetch(tmp_path, monkeypatch):
+    """Sans path_prefix, rien à économiser (tout serait gardé) -> pas de fetch sélectif,
+    même pour une URL GitHub-shaped ; l'`ingest` injecté est utilisé normalement."""
+    from studio.assets import sourcefetch
+    called = []
+    monkeypatch.setattr(sourcefetch, "list_remote_files",
+                        lambda url, token=None: called.append(url) or None)
+    src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
+    repobuild.build(["https://github.com/o/r"], tmp_path / "out", cards_as="alt",
+                    ingest=lambda s, wd, on_progress=None: src, git_init=False)
+    assert called == []
+
+
+# ------------------------------------------------------------------ P8+ : corruption réseau (retry)
+# Un zip structurellement invalide ne lève PAS BadZipFile (`zipfile.is_zipfile` renvoie
+# juste False, sans exception) : la vraie panne réelle ("Bad CRC-32" au milieu de
+# l'extraction) survient sur un zip dont le CENTRAL DIRECTORY est valide mais dont les
+# données d'UN membre sont corrompues — trop fin à reproduire byte à byte ici. On mocke donc
+# `_materialize` (le point qui lève réellement `zipfile.BadZipFile` dans le code de prod) pour
+# tester la seule chose qui m'appartient : l'orchestration du retry dans `ingest`.
+def test_ingest_retries_on_bad_zip_then_succeeds(tmp_path, monkeypatch):
+    """Régression de l'incident réel (BadZipFile 'Bad CRC-32' en pleine extraction d'un gros
+    zip GitHub) : `ingest` retente le téléchargement complet plutôt que de planter direct."""
+    downloads = []
+    materialize_calls = []
+
+    def fake_download(url, dest_zip, timeout=60.0, on_progress=packlib._noop_progress):
+        downloads.append(url)
+        dest_zip.write_bytes(b"placeholder")
+
+    def fake_materialize(archive, out, orig_name, on_progress=packlib._noop_progress):
+        materialize_calls.append(archive)
+        if len(materialize_calls) < 2:
+            raise zipfile.BadZipFile("Bad CRC-32 for file 'x'")
+        out.mkdir(parents=True, exist_ok=True)
+        make_png(out / "Cards" / "OP01" / "OP01-001.png")
+        return out
+
+    monkeypatch.setattr(packlib, "_download", fake_download)
+    monkeypatch.setattr(packlib, "_resolve_url", lambda u: u)
+    monkeypatch.setattr(packlib, "_materialize", fake_materialize)
+    monkeypatch.setattr(packlib.time, "sleep", lambda s: None)   # pas d'attente réelle en test
+    out = packlib.ingest("https://example.com/pack.zip", tmp_path / "w")
+    assert len(downloads) == 2   # re-téléchargé en entier après l'échec (seul recours possible)
+    assert (out / "Cards" / "OP01" / "OP01-001.png").exists()
+
+
+def test_ingest_gives_up_after_max_attempts_with_clear_error(tmp_path, monkeypatch):
+    def always_bad(archive, out, orig_name, on_progress=packlib._noop_progress):
+        raise zipfile.BadZipFile("Bad CRC-32 for file 'x'")
+
+    monkeypatch.setattr(packlib, "_download",
+                        lambda url, dest_zip, timeout=60.0, on_progress=None: dest_zip.write_bytes(b"x"))
+    monkeypatch.setattr(packlib, "_resolve_url", lambda u: u)
+    monkeypatch.setattr(packlib, "_materialize", always_bad)
+    monkeypatch.setattr(packlib.time, "sleep", lambda s: None)
+    with pytest.raises(packlib.PackError, match="coupure réseau"):
+        packlib.ingest("https://example.com/pack.zip", tmp_path / "w")

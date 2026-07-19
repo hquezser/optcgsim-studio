@@ -473,10 +473,12 @@ def _print_repo_report(rep, repobuild) -> None:
 def cmd_repos_build(args) -> int:
     """Construit des dépôts d'images par famille depuis des sources (GitHub/Dropbox/Drive)."""
     from .assets import repobuild
+    from .config import Config
     rep = repobuild.build(
         args.source, Path(args.out), cards_as=args.cards_as,
         split_cards_by_type=not args.no_split, git_init=not args.no_git,
-        path_prefix=args.path_prefix, lang=args.lang, on_progress=_console_progress)
+        path_prefix=args.path_prefix, lang=args.lang, token=Config().github_token(),
+        on_progress=_console_progress)
     _print_repo_report(rep, repobuild)
     print(f"\nDépôts prêts dans {args.out}. Prochaine étape (à faire par toi) :")
     print("  cd <dépôt> && git add -A && git commit -m init")
@@ -489,7 +491,9 @@ def cmd_repos_update(args) -> int:
     """Rejoue les builds déjà lancés sous --out (mêmes sources, sans les retaper) et affiche
     le diff (ajoutés/modifiés/orphelins) par dépôt, pour savoir quoi committer."""
     from .assets import repobuild
-    reports = repobuild.update(Path(args.out), on_progress=_console_progress)
+    from .config import Config
+    reports = repobuild.update(Path(args.out), token=Config().github_token(),
+                               on_progress=_console_progress)
     for rep in reports:
         _print_repo_report(rep, repobuild)
     print("\nPour chaque dépôt avec des changements :")
