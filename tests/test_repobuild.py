@@ -90,7 +90,11 @@ def test_build_routes_into_family_repos(tmp_path):
     # MANIFEST par dépôt, avec compte par type pour les cartes
     man = json.loads((out / "cards-alt" / "MANIFEST.json").read_text())
     assert man["family"] == "cards-alt" and man["by_type"] == {"Leaders": 1, "Characters": 1}
-    assert man["files"] == 2
+    assert man["file_count"] == 2
+    # premier build : tout est "ajouté", rien de modifié/orphelin
+    assert sorted(rep.repos["cards-alt"].added) == [
+        "Characters/Cards/OP01/OP01-016.png", "Leaders/Cards/OP01/OP01-001.png"]
+    assert rep.repos["cards-alt"].changed == [] and rep.repos["cards-alt"].orphans == []
 
 
 def test_build_collision_last_source_wins(tmp_path):
@@ -114,6 +118,99 @@ def test_build_git_init_creates_repo_and_gitignore(tmp_path):
     repobuild.build(["s"], out, ingest=lambda s, wd, on_progress=None: src, git_init=True)
     assert (out / "cards-alt" / ".gitignore").is_file()
     # .git présent seulement si git est installé ; on ne l'exige pas
+
+
+# ------------------------------------------------------------------ P8+ : mise à jour (repos update)
+def test_rebuild_same_source_is_not_a_false_collision(tmp_path):
+    """Relancer build() sur un --out DÉJÀ construit ne doit PAS signaler chaque fichier
+    existant comme une collision (bug initial : collision détectée sur dest.exists())."""
+    src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
+    out = tmp_path / "out"
+    fake_ingest = lambda s, wd, on_progress=None: src
+    rep1 = repobuild.build(["s"], out, ingest=fake_ingest, git_init=False)
+    rep2 = repobuild.build(["s"], out, ingest=fake_ingest, git_init=False)
+    assert rep1.collisions == [] and rep2.collisions == []
+
+
+def test_rebuild_reports_added_changed_orphans(tmp_path):
+    src = tmp_path / "src"
+    make_png(src / "Cards" / "OP01" / "OP01-001.png")   # leader, inchangé
+    out = tmp_path / "out"
+    fake_ingest = lambda s, wd, on_progress=None: src
+    repobuild.build(["s"], out, ingest=fake_ingest, git_init=False)
+
+    # nouvelle "sortie de set" : le leader change de version + un event apparaît + rien d'autre
+    make_png(src / "Cards" / "OP01" / "OP01-001.png", 500, 700)   # même id, contenu différent
+    make_png(src / "Cards" / "OP14" / "OP14-018.png")             # event : nouveau
+    rep2 = repobuild.build(["s"], out, ingest=fake_ingest, git_init=False)
+
+    stat = rep2.repos["cards-alt"]
+    assert stat.added == ["Events/Cards/OP14/OP14-018.png"]
+    assert stat.changed == ["Leaders/Cards/OP01/OP01-001.png"]
+    assert stat.orphans == []
+
+
+def test_rebuild_reports_orphan_when_source_drops_a_file(tmp_path):
+    src = tmp_path / "src"
+    make_png(src / "Cards" / "OP01" / "OP01-001.png")
+    make_png(src / "Cards" / "OP01" / "OP01-016.png")
+    out = tmp_path / "out"
+    fake_ingest = lambda s, wd, on_progress=None: src
+    repobuild.build(["s"], out, ingest=fake_ingest, git_init=False)
+
+    (src / "Cards" / "OP01" / "OP01-016.png").unlink()   # retiré de la source
+    rep2 = repobuild.build(["s"], out, ingest=fake_ingest, git_init=False)
+
+    stat = rep2.repos["cards-alt"]
+    assert stat.orphans == ["Characters/Cards/OP01/OP01-016.png"]
+    # jamais supprimé sur disque, juste signalé
+    assert (out / "cards-alt" / "Characters" / "Cards" / "OP01" / "OP01-016.png").is_file()
+
+
+def test_build_records_log_for_update(tmp_path):
+    src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
+    out = tmp_path / "out"
+    repobuild.build(["s"], out, cards_as="alt", split_cards_by_type=True,
+                    ingest=lambda s, wd, on_progress=None: src, git_init=False)
+    log = repobuild.load_build_log(out)
+    assert log == [{"sources": ["s"], "cards_as": "alt", "split_cards_by_type": True}]
+    # (out / ".repos-build.json") reste HORS des dépôts de famille -> jamais poussé avec eux
+    assert not (out / "cards-alt" / ".repos-build.json").exists()
+
+
+def test_build_log_dedupes_by_config_not_by_sources(tmp_path):
+    src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
+    out = tmp_path / "out"
+    ingest = lambda s, wd, on_progress=None: src
+    repobuild.build(["s"], out, cards_as="alt", ingest=ingest, git_init=False)
+    repobuild.build(["s", "s2"], out, cards_as="alt", ingest=ingest, git_init=False)
+    log = repobuild.load_build_log(out)
+    assert len(log) == 1 and log[0]["sources"] == ["s", "s2"]   # la 2e config remplace la 1re
+
+
+def test_update_replays_recorded_sources_without_reasking(tmp_path):
+    src = tmp_path / "src"
+    make_png(src / "Cards" / "OP01" / "OP01-001.png")
+    out = tmp_path / "out"
+    calls = []
+
+    def fake_ingest(source, wd, on_progress=None):
+        calls.append(source)
+        return src
+
+    repobuild.build(["my-drive-link"], out, cards_as="alt", ingest=fake_ingest, git_init=False)
+    calls.clear()
+    make_png(src / "Cards" / "OP14" / "OP14-018.png")   # nouvelle sortie de set
+    reports = repobuild.update(out, ingest=fake_ingest)
+
+    assert calls == ["my-drive-link"]         # source rejouée SANS la repasser explicitement
+    assert len(reports) == 1
+    assert reports[0].repos["cards-alt"].added == ["Events/Cards/OP14/OP14-018.png"]
+
+
+def test_update_without_prior_build_raises(tmp_path):
+    with pytest.raises(packlib.PackError, match="historique"):
+        repobuild.update(tmp_path / "never-built")
 
 
 # ------------------------------------------------------------------ Google Drive

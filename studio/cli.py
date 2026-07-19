@@ -441,6 +441,35 @@ def cmd_decks_validate_pack(args) -> int:
 
 
 # --------------------------------------------------------------------------- repos
+def _print_repo_line(fam: str, s, repobuild) -> None:
+    line = f"  • {fam}/ — {s.files} fichiers, {s.bytes // (1024*1024)} Mo"
+    if s.by_type:
+        line += " [" + ", ".join(f"{k}:{v}" for k, v in sorted(s.by_type.items())) + "]"
+    bits = []
+    if s.added:
+        bits.append(f"+{len(s.added)} ajoutés")
+    if s.changed:
+        bits.append(f"~{len(s.changed)} modifiés")
+    if s.orphans:
+        bits.append(f"{len(s.orphans)} orphelin(s) (plus dans la source, non supprimés)")
+    if bits:
+        line += " — " + ", ".join(bits)
+    print(line)
+    if s.oversize:
+        print(f"    ⚠ dépôt > {repobuild.GITHUB_SOFT_LIMIT // (1024*1024)} Mo — "
+              "envisage de scinder (déplace un sous-dossier de type dans un autre dépôt).")
+
+
+def _print_repo_report(rep, repobuild) -> None:
+    print(rep.summary())
+    for fam, s in sorted(rep.repos.items()):
+        _print_repo_line(fam, s, repobuild)
+    if rep.collisions:
+        print(f"  ⚠ {len(rep.collisions)} collision(s) (dernière source gardée).")
+    if rep.unclassified:
+        print(f"  {len(rep.unclassified)} fichier(s) non classé(s) (ignorés).")
+
+
 def cmd_repos_build(args) -> int:
     """Construit des dépôts d'images par famille depuis des sources (GitHub/Dropbox/Drive)."""
     from .assets import repobuild
@@ -448,22 +477,23 @@ def cmd_repos_build(args) -> int:
         args.source, Path(args.out), cards_as=args.cards_as,
         split_cards_by_type=not args.no_split, git_init=not args.no_git,
         on_progress=_console_progress)
-    print(rep.summary())
-    for fam, s in sorted(rep.repos.items()):
-        line = f"  • {fam}/ — {s.files} fichiers, {s.bytes // (1024*1024)} Mo"
-        if s.by_type:
-            line += " [" + ", ".join(f"{k}:{v}" for k, v in sorted(s.by_type.items())) + "]"
-        print(line)
-        if s.oversize:
-            print(f"    ⚠ dépôt > {repobuild.GITHUB_SOFT_LIMIT // (1024*1024)} Mo — "
-                  "envisage de scinder (déplace un sous-dossier de type dans un autre dépôt).")
-    if rep.collisions:
-        print(f"  ⚠ {len(rep.collisions)} collision(s) (dernière source gardée).")
-    if rep.unclassified:
-        print(f"  {len(rep.unclassified)} fichier(s) non classé(s) (ignorés).")
+    _print_repo_report(rep, repobuild)
     print(f"\nDépôts prêts dans {args.out}. Prochaine étape (à faire par toi) :")
     print("  cd <dépôt> && git add -A && git commit -m init")
     print("  git remote add origin git@github.com:<toi>/<dépôt-privé>.git && git push -u origin main")
+    print(f"\nÀ chaque sortie de set : studio repos update --out {args.out}")
+    return 0
+
+
+def cmd_repos_update(args) -> int:
+    """Rejoue les builds déjà lancés sous --out (mêmes sources, sans les retaper) et affiche
+    le diff (ajoutés/modifiés/orphelins) par dépôt, pour savoir quoi committer."""
+    from .assets import repobuild
+    reports = repobuild.update(Path(args.out), on_progress=_console_progress)
+    for rep in reports:
+        _print_repo_report(rep, repobuild)
+    print("\nPour chaque dépôt avec des changements :")
+    print("  cd <dépôt> && git add -A && git commit -m 'maj <nom du set>' && git push")
     return 0
 
 
@@ -594,6 +624,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="ne pas exécuter git init dans chaque dépôt")
     rb.set_defaults(func=cmd_repos_build)
 
+    ru = sr.add_parser("update",
+                       help="rejouer les builds déjà lancés sous --out (mêmes sources, "
+                            "sans les retaper) et afficher le diff — à faire à chaque sortie de set")
+    ru.add_argument("--out", required=True,
+                    help="dossier déjà construit par `repos build` (contient .repos-build.json)")
+    ru.set_defaults(func=cmd_repos_update)
+
     pc = sub.add_parser("config", help="configuration locale (token GitHub…)")
     sc = pc.add_subparsers(dest="sub", required=True)
     sct = sc.add_parser("set-github-token",
@@ -607,7 +644,7 @@ def main(argv=None) -> int:
     try:
         args = build_parser().parse_args(argv)
         return args.func(args)
-    except (AssetError, importer.ImportError_) as e:
+    except (AssetError, importer.ImportError_, packlib.PackError) as e:
         print(f"Erreur : {e}", file=sys.stderr)
         return 1
 

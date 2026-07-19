@@ -326,6 +326,30 @@ locale, l'utilisateur pousse** (pas de push automatique).
   collisions, git init, parsing/ingest Drive). 152 verts.
 - Reste possible (non demandé) : surface UI, et crawl de **dossier** Drive via clé API.
 
+### (d) Mise à jour à chaque sortie de set — FAIT (2026-07-19)
+
+Suivi direct de (c) : « il faudrait être capable de mettre à jour facilement nos repos à
+chaque sortie ». Deux manques identifiés dans `build()` initial : (1) le re-lancer sur un
+`--out` déjà construit signalait CHAQUE fichier existant comme une « collision » (bug — la
+détection comparait à l'existence sur disque, pas aux écritures de CE run) ; (2) il fallait
+retaper toutes les sources à chaque fois.
+
+- **Fix collision** : la détection ne compare plus qu'aux chemins déjà écrits PENDANT le même
+  appel de `build()` — une collision ne désigne que deux sources du même run visant la même
+  cible. Rejouer `build()` sur un `--out` existant est désormais sûr (idempotent).
+- **`.repos-build.json`** (racine de `--out`, hors des dépôts de famille → jamais poussé) :
+  chaque `build()` enregistre ses `sources`/`cards_as`/`split_cards_by_type` (dédupliqué par
+  config, pas par sources — relancer avec des sources différentes mais la même config
+  remplace l'entrée).
+- **`repobuild.update(out_dir)`** / CLI `studio repos update --out DIR` : relit ce journal et
+  rejoue chaque config SANS redemander les liens.
+- **Diff par dépôt** (`RepoStat.added/changed/orphans`, sha1 contre le `MANIFEST.json`
+  précédent) : ajoutés, modifiés, et orphelins (disparus de la source — **jamais supprimés
+  automatiquement**, juste signalés) — sert de base au message de commit.
+- Tests : rebuild sans fausse collision, diff ajouté/modifié/orphelin, journal dédupliqué,
+  `update()` rejoue sans repasser les sources, erreur propre si `--out` jamais construit.
+  159 verts.
+
 ## Chantier P9 — Publier le format « pack de decks » (contribution communautaire)
 
 Objectif : permettre à la communauté de créer et partager des packs de decks (le format

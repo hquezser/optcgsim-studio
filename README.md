@@ -217,6 +217,20 @@ Le studio **ne pousse rien** : il affiche la recette `git remote add … && git 
 toi-même. Un dépôt qui dépasse ~900 Mo est signalé (scinde-le). Ces dépôts d'images restent
 **privés** (tu n'es pas l'ayant droit).
 
+**Mettre à jour à chaque sortie de set**, sans retaper les liens :
+
+```bash
+studio repos update --out ~/optcgsim-repos
+```
+
+Rejoue exactement les sources de chaque `repos build` précédent (mémorisées dans
+`.repos-build.json`, à la racine de `--out` — hors des dépôts eux-mêmes, jamais poussé) et
+affiche un **diff par dépôt** : fichiers ajoutés / modifiés (par empreinte sha1) / orphelins
+(disparus de la source — jamais supprimés automatiquement, juste signalés). Sert de base au
+message de commit (« ajoute OP15, corrige 2 alt-arts OP14 »). Ré-exécuter `repos build`
+directement sur un `--out` déjà construit est aussi sûr (idempotent) — `update` évite juste
+de retaper les sources.
+
 ## Pilier 3 — Synchronisation multi-appareils (`studio sync`)
 
 Offline-first : SQLite local par défaut, cloud en opt-in — **même protocole** (`SyncStore`),
