@@ -255,7 +255,11 @@ def _finalize_repo(repo_dir: Path, stat: RepoStat, sources: list[str], git_init:
                    files: dict[str, str]) -> None:
     manifest_path = repo_dir / "MANIFEST.json"
     old = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    # Compat : dans les tout premiers MANIFEST, "files" était un ENTIER (le compte, désormais
+    # "file_count") ; la map chemin->sha1 n'existait pas. On repart alors d'un diff vide.
     old_files = old.get("files", {})
+    if not isinstance(old_files, dict):
+        old_files = {}
     stat.added = sorted(set(files) - set(old_files))
     stat.changed = sorted(r for r in files if r in old_files and old_files[r] != files[r])
     stat.orphans = sorted(set(old_files) - set(files))

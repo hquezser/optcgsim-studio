@@ -228,6 +228,24 @@ def test_update_without_prior_build_raises(tmp_path):
         repobuild.update(tmp_path / "never-built")
 
 
+def test_rebuild_over_legacy_manifest_with_int_files(tmp_path):
+    """Régression : un MANIFEST.json d'avant `repos update` avait "files" = ENTIER (compte).
+    Rebuild ne doit pas planter (TypeError: 'int' object is not iterable) mais repartir
+    d'un diff propre (tout en 'ajouté')."""
+    src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
+    out = tmp_path / "out"
+    # simule un ancien dépôt : MANIFEST avec l'ancien schéma ("files": <int>)
+    legacy = out / "cards-alt"
+    legacy.mkdir(parents=True)
+    (legacy / "MANIFEST.json").write_text(json.dumps({"family": "cards-alt", "files": 42}))
+
+    rep = repobuild.build(["s"], out, ingest=lambda s, wd, on_progress=None: src, git_init=False)
+    assert rep.repos["cards-alt"].added == ["Leaders/Cards/OP01/OP01-001.png"]
+    assert rep.repos["cards-alt"].orphans == []      # l'entier n'est pas traité comme des chemins
+    man = json.loads((legacy / "MANIFEST.json").read_text())
+    assert isinstance(man["files"], dict)            # migré vers la map chemin->sha1
+
+
 # ------------------------------------------------------------------ Google Drive
 @pytest.mark.parametrize("url,expected", [
     ("https://drive.google.com/file/d/1AbC_dEF-9/view?usp=sharing", "1AbC_dEF-9"),
