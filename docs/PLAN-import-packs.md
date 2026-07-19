@@ -107,6 +107,17 @@ Page « Cosmétiques » branchée sur les MÊMES rapports JSON que le CLI :
 4. (plus tard, inspiré du créateur Themer) : composition de thème dans NOTRE frontend —
    hors périmètre de ce plan.
 
+**Ajout (2026-07-19)** — retrait en masse : après un import de collection (P10-c, plusieurs
+packs d'un coup), retirer un par un depuis « Bibliothèque de packs » était fastidieux. Chaque
+carte de pack a maintenant une case à cocher, une case « tout sélectionner » et un bouton
+« Retirer la sélection » (`toggleAllPacks()`/`removeSelectedPacks()`, `index.html`) — appelle
+`POST /api/packs/<name>/remove` **séquentiellement** pour chaque pack coché, même pattern de
+réutilisation que l'import de collection (aucune nouvelle route, `remove()` existant). Une
+confirmation JS (`confirm()`) protège l'action groupée (absente sur le retrait individuel,
+plus anodin). Vérifié en direct dans le navigateur (chrome-devtools MCP, sandbox jetable) :
+sélection de 2 packs → confirmation → les deux disparaissent de la bibliothèque, toast
+récapitulatif (« 2/2 pack(s) retiré(s) »).
+
 ## Chantier P5 — Catalogue communautaire — ABANDONNÉ (2026-07-19)
 
 > **Décision** : abandonné. Un catalogue LOCAL générique fait doublon avec l'existant —

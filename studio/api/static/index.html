@@ -165,6 +165,12 @@
     <h2>Bibliothèque de packs</h2>
     <p class="sub">Applique un pack (réversible à tout instant), ou vois combien de cartes de
       <b>tes decks</b> il habille.</p>
+    <div id="packs-bulk" class="row" style="display:none;align-items:center;gap:10px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+        <input type="checkbox" id="packs-select-all" onchange="toggleAllPacks(this.checked)"
+               style="width:auto"> tout sélectionner</label>
+      <button class="mini ghost" onclick="removeSelectedPacks()">Retirer la sélection</button>
+    </div>
     <div id="packs"><div class="empty">Chargement…</div></div>
   </section>
 
@@ -212,10 +218,16 @@ async function loadStatus(){
 async function loadPacks(){
   const packs = await api('/packs');
   const el = $('#packs');
-  if(!packs.length){ el.innerHTML='<div class="empty">Bibliothèque vide — ajoute un pack ci-dessus.</div>'; return; }
+  $('#packs-bulk').style.display = packs.length ? 'flex' : 'none';
+  if(!packs.length){
+    el.innerHTML='<div class="empty">Bibliothèque vide — ajoute un pack ci-dessus.</div>';
+    $('#packs-select-all').checked = false;
+    return;
+  }
   el.innerHTML = packs.map(p=>`
     <div class="pack" data-name="${p.name}">
       <div class="top">
+        <input type="checkbox" class="pack-select" value="${p.name}" style="width:auto">
         <span class="name">${p.name}</span>
         <span class="tag">${p.kind}</span>
         ${p.applied?`<span class="tag applied">✓ appliqué (${p.applied})</span>`:''}
@@ -230,6 +242,27 @@ async function loadPacks(){
       </div>
       <div class="cov"></div>
     </div>`).join('');
+}
+
+function toggleAllPacks(checked){
+  document.querySelectorAll('.pack-select').forEach(c => c.checked = checked);
+}
+
+async function removeSelectedPacks(){
+  const names = [...document.querySelectorAll('.pack-select:checked')].map(c => c.value);
+  if(!names.length) return toast('Sélectionne au moins un pack', 1);
+  if(!confirm(`Retirer ${names.length} pack(s) sélectionné(s) ? (restaure les fichiers `
+             +'originaux — réversible en ré-ajoutant le pack depuis sa source)')) return;
+  let restored = 0, ok = 0;
+  for(const name of names){
+    try{
+      const r = await api(`/packs/${encodeURIComponent(name)}/remove`, {method:'POST'});
+      restored += r.restored; ok++;
+    }catch(e){ toast(`« ${name} » : ${e.message}`, 1); }
+  }
+  toast(`${ok}/${names.length} pack(s) retiré(s) (${restored} fichier(s) restauré(s))`
+       +(ok < names.length ? `, ${names.length - ok} échec(s).` : '.'));
+  loadStatus(); loadPacks();
 }
 
 async function loadDecks(){
