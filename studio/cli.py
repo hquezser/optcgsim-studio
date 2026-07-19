@@ -476,7 +476,7 @@ def cmd_repos_build(args) -> int:
     rep = repobuild.build(
         args.source, Path(args.out), cards_as=args.cards_as,
         split_cards_by_type=not args.no_split, git_init=not args.no_git,
-        path_prefix=args.path_prefix, on_progress=_console_progress)
+        path_prefix=args.path_prefix, lang=args.lang, on_progress=_console_progress)
     _print_repo_report(rep, repobuild)
     print(f"\nDépôts prêts dans {args.out}. Prochaine étape (à faire par toi) :")
     print("  cd <dépôt> && git add -A && git commit -m init")
@@ -629,6 +629,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "variante avec un --cards-as et un --path-prefix distincts évite la "
                          "collision. N'exclut jamais traduction/playmats/dos de carte, qui "
                          "sont des assets partagés hors sujet du préfixe.")
+    rb.add_argument("--lang", default=None,
+                    help="langue du TRANSLATION.txt de ces sources (ex. fr, es) -> dépôt "
+                         "translations-<lang>, INDÉPENDANT de --cards-as. Sans ça, deux "
+                         "variantes d'art (classique/full-art) ou deux langues partageant le "
+                         "même alias écraseraient le même TRANSLATION.txt ; --lang fr regroupe "
+                         "toutes les variantes d'une langue dans un seul dépôt de traduction.")
     rb.set_defaults(func=cmd_repos_build)
 
     ru = sr.add_parser("update",

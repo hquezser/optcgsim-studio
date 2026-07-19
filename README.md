@@ -220,19 +220,26 @@ dernière gagnante, perte silencieuse si on ne regarde pas le rapport). Scinder 
 `--cards-as` distinct, préserve les deux :
 
 ```bash
-studio repos build <lien-fr> --out ~/optcgsim-repos --cards-as translated     --path-prefix FR_classique
-studio repos build <lien-fr> --out ~/optcgsim-repos --cards-as translated-alt --path-prefix FR_alt
+studio repos build <lien-fr> --out ~/optcgsim-repos --cards-as translated-fr-classic --path-prefix FR_classique --lang fr
+studio repos build <lien-fr> --out ~/optcgsim-repos --cards-as translated-fr-fullart --path-prefix FR_full_art --lang fr
 ```
 
-(adapter `FR_classique`/`FR_alt` aux vrais noms de dossiers de la source — `studio repos
-build` sans `--path-prefix` d'abord, en lisant les non-classés/collisions du rapport, aide à
-les repérer). Chaque configuration est mémorisée séparément : `studio repos update --out …`
+(adapter les `--path-prefix` aux vrais noms de dossiers de la source — `studio repos build`
+sans `--path-prefix` d'abord, en lisant les non-classés/collisions du rapport, aide à les
+repérer). Chaque configuration est mémorisée séparément : `studio repos update --out …`
 rejoue les deux.
 
 Le préfixe ne restreint QUE les cartes/DON!! (seules catégories canonicalisées par id, donc à
 risque de collision) — un `TRANSLATION.txt`, des playmats ou des dos de carte à la racine de
 la source (hors des deux sous-dossiers) sont inclus dans **chaque** build scopé, pas besoin
 d'un 3ᵉ appel dédié.
+
+**`--lang`** découple la LANGUE du texte de traduction de la VARIANTE d'art choisie
+(`--cards-as`) — deux axes orthogonaux. Sans `--lang`, la traduction suit un alias fixe
+(`translations`) : une future langue (ES…) écraserait la FR. Avec `--lang fr` sur les DEUX
+builds ci-dessus, leur `TRANSLATION.txt` converge dans un seul dépôt `translations-fr/` (pas
+dupliqué par variante d'art) ; une langue future (`--lang es`) va dans `translations-es/`,
+sans jamais toucher au FR.
 
 Sources : **GitHub** (dépôt/zip) et **Dropbox** (dossier partagé → zip) sont téléchargés
 entiers ; **Google Drive** est géré pour les **fichiers/zip partagés** (« tout le monde avec

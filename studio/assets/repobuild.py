@@ -28,6 +28,13 @@ jamais poussé avec eux). `update()` rejoue ces configurations sans que l'utilis
 retaper ses liens, et calcule un **diff par dépôt** (ajoutés/modifiés/orphelins, par sha1
 contre le `MANIFEST.json` précédent) pour savoir quoi committer. Rien n'est jamais supprimé
 automatiquement : un fichier disparu de la source devient un « orphelin » signalé, pas effacé.
+
+**Langue de traduction** (`lang=`) : axe INDÉPENDANT de `cards_as`. Une traduction (catégorie
+`translation`, le `TRANSLATION.txt`) est routée vers `translations-<lang>` si `lang` est
+fourni, sinon vers l'alias fixe `translations`. Sans ça, deux langues (FR, ES…) ou deux
+variantes d'art de la MÊME langue (classique, full-art) partageant `cards_as="translated"`
+écraseraient le même `TRANSLATION.txt` — `lang` regroupe toutes les variantes d'une langue
+dans un seul dépôt de traduction, sans jamais toucher aux autres langues.
 """
 from __future__ import annotations
 
@@ -117,9 +124,16 @@ def _canonical_card_name(cid: str, filename: str) -> str:
 
 
 def route(cat: str, cid: str | None, filename: str, cards_as: str,
-          split_cards_by_type: bool) -> tuple[str | None, str | None]:
+          split_cards_by_type: bool, lang: str | None = None) -> tuple[str | None, str | None]:
     """(catégorie, id, nom) -> (dépôt cible, chemin relatif dans le dépôt), ou (None, None)
-    si le fichier n'est pas à retenir (catégorie « other »)."""
+    si le fichier n'est pas à retenir (catégorie « other »).
+
+    `lang`, s'il est fourni, route la catégorie `translation` vers `translations-<lang>`
+    au lieu de l'alias fixe `translations` — INDÉPENDAMMENT de `cards_as`. La langue d'un
+    texte de traduction et la variante d'art choisie (classique/alt) sont deux axes
+    orthogonaux : un même `--lang fr` regroupe TOUTES les variantes d'art FR (classique,
+    full-art…) dans un seul dépôt de traduction, et une future langue (`--lang es`) va dans
+    le sien, sans jamais écraser le FR (ce que faisait l'alias fixe)."""
     if cat == "cards":
         fam = _card_family(cards_as)
         set_ = cid.split("-")[0] if cid else "UNKNOWN"
@@ -134,6 +148,9 @@ def route(cat: str, cid: str | None, filename: str, cards_as: str,
         if split_cards_by_type:
             return fam, f"{DON_TYPE_DIR}/Cards/Don/{filename}"
         return fam, f"Cards/Don/{filename}"
+    if cat == "translation":
+        fam = f"translations-{lang}" if lang else _FIXED_FAMILY["translation"]
+        return fam, filename
     if cat in _FIXED_FAMILY:
         prefix = {"cardbacks": "CardBacks/", "playmats": "Playmats/"}.get(cat, "")
         return _FIXED_FAMILY[cat], f"{prefix}{filename}"
@@ -161,7 +178,8 @@ def _iter_files(root: Path):
 
 def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
           split_cards_by_type: bool = True, git_init: bool = True,
-          path_prefix: str | None = None, work_dir: Path | None = None, ingest=packlib.ingest,
+          path_prefix: str | None = None, lang: str | None = None,
+          work_dir: Path | None = None, ingest=packlib.ingest,
           on_progress: packlib.OnProgress = packlib._noop_progress) -> RepoBuildReport:
     """Ingère chaque source, route chaque fichier vers son dépôt de famille, écrit les dépôts.
 
@@ -174,8 +192,13 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
     (traduction, tapis, dos de carte…) sont des assets PARTAGÉS, hors sujet du préfixe — un
     `TRANSLATION.txt` à la racine est inclus dans CHAQUE build scopé, pas besoin d'un 3e appel.
     Lancer un `build()` par variante, avec un `cards_as` distinct (ex. "translated" puis
-    "translated-alt") et un `path_prefix` qui
-    scope chacun à son sous-dossier, les préserve toutes les deux — chacune dans sa famille.
+    "translated-alt") et un `path_prefix` qui scope chacun à son sous-dossier, les préserve
+    toutes les deux — chacune dans sa famille.
+
+    `lang`, indépendant de `cards_as`, route la traduction vers `translations-<lang>` au lieu
+    de l'alias fixe `translations` : deux builds de variantes différentes (classique/full-art)
+    avec le MÊME `lang` regroupent leur traduction dans UN seul dépôt de langue, et une future
+    langue n'écrase jamais la précédente (cf. `route()`).
 
     Ré-exécutable sans risque sur un `out_dir` déjà construit (les fichiers déjà présents sont
     remplacés, pas signalés en collision — une « collision » ne désigne QUE deux sources de CE
@@ -202,7 +225,7 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
                     and not (rel_str == prefix or rel_str.startswith(prefix + "/"))):
                 rep.excluded_by_prefix += 1
                 continue
-            fam, target_rel = route(cat, cid, f.name, cards_as, split_cards_by_type)
+            fam, target_rel = route(cat, cid, f.name, cards_as, split_cards_by_type, lang)
             if fam is None:
                 rep.unclassified.append({"source": src, "path": rel_str})
                 continue
@@ -221,7 +244,7 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
         stat.by_type = _by_type_from_written(files)
         _finalize_repo(out_dir / fam, stat, rep.sources, git_init, files)
 
-    _record_build(out_dir, sources, cards_as, split_cards_by_type, path_prefix)
+    _record_build(out_dir, sources, cards_as, split_cards_by_type, path_prefix, lang)
     return rep
 
 
@@ -238,29 +261,33 @@ def update(out_dir: Path, *, work_dir: Path | None = None, ingest=packlib.ingest
     return [build(e["sources"], out_dir, cards_as=e["cards_as"],
                  split_cards_by_type=e["split_cards_by_type"],
                  path_prefix=e.get("path_prefix"),   # absent dans les vieux journaux -> None
+                 lang=e.get("lang"),                 # idem
                  work_dir=work_dir, ingest=ingest, on_progress=on_progress)
            for e in entries]
 
 
 def load_build_log(out_dir: Path) -> list[dict]:
-    """Les configurations de build enregistrées sous `out_dir` (une par cards_as/split-type
-    distincts). Fichier caché, en dehors de tous les dépôts de famille : jamais poussé."""
+    """Les configurations de build enregistrées sous `out_dir` (une par cards_as/split-type/
+    path_prefix/lang distincts). Fichier caché, en dehors de tous les dépôts de famille :
+    jamais poussé."""
     path = Path(out_dir) / _LOG_NAME
     return json.loads(path.read_text()) if path.exists() else []
 
 
-def _record_build(out_dir: Path, sources: list[str], cards_as: str,
-                  split_cards_by_type: bool, path_prefix: str | None) -> None:
+def _record_build(out_dir: Path, sources: list[str], cards_as: str, split_cards_by_type: bool,
+                  path_prefix: str | None, lang: str | None) -> None:
     path = Path(out_dir) / _LOG_NAME
     entries = json.loads(path.read_text()) if path.exists() else []
-    # dédup par (cards_as, split, path_prefix) : deux prefixes distincts sous le même cards_as
-    # (rare, mais possible) restent deux entrées distinctes, chacune rejouable par `update()`.
+    # dédup par (cards_as, split, path_prefix, lang) : deux configs qui ne diffèrent que par
+    # le préfixe ou la langue restent deux entrées distinctes, chacune rejouable par update().
     entries = [e for e in entries
               if not (e["cards_as"] == cards_as
                       and e["split_cards_by_type"] == split_cards_by_type
-                      and e.get("path_prefix") == path_prefix)]
+                      and e.get("path_prefix") == path_prefix
+                      and e.get("lang") == lang)]
     entries.append({"sources": list(sources), "cards_as": cards_as,
-                    "split_cards_by_type": split_cards_by_type, "path_prefix": path_prefix})
+                    "split_cards_by_type": split_cards_by_type,
+                    "path_prefix": path_prefix, "lang": lang})
     path.write_text(json.dumps(entries, indent=2, ensure_ascii=False))
 
 

@@ -37,6 +37,19 @@ def test_route_cards_translated_family_and_txt():
         "translations", "TRANSLATION.txt")
 
 
+def test_route_translation_uses_lang_not_cards_as():
+    # `lang` est un axe INDÉPENDANT de `cards_as` : la traduction ne suit plus l'alias fixe.
+    assert repobuild.route("translation", None, "TRANSLATION.txt", "alt", True, lang="fr") == (
+        "translations-fr", "TRANSLATION.txt")
+    assert repobuild.route("translation", None, "TRANSLATION.txt", "translated-alt", True,
+                           lang="fr") == ("translations-fr", "TRANSLATION.txt")
+    assert repobuild.route("translation", None, "TRANSLATION.txt", "translated", True,
+                           lang="es") == ("translations-es", "TRANSLATION.txt")
+    # sans lang : comportement inchangé (alias fixe "translations")
+    assert repobuild.route("translation", None, "TRANSLATION.txt", "alt", True) == (
+        "translations", "TRANSLATION.txt")
+
+
 def test_route_don_goes_to_cards_family_not_cardbacks():
     # DON!! alternatif = un reskin de CARTE, pas un dos de carte -> famille cartes, type "Don".
     assert repobuild.route("don", None, "Don.png", "alt", True) == (
@@ -189,7 +202,7 @@ def test_build_records_log_for_update(tmp_path):
                     ingest=lambda s, wd, on_progress=None: src, git_init=False)
     log = repobuild.load_build_log(out)
     assert log == [{"sources": ["s"], "cards_as": "alt", "split_cards_by_type": True,
-                    "path_prefix": None}]
+                    "path_prefix": None, "lang": None}]
     # (out / ".repos-build.json") reste HORS des dépôts de famille -> jamais poussé avec eux
     assert not (out / "cards-alt" / ".repos-build.json").exists()
 
@@ -282,6 +295,46 @@ def test_path_prefix_recorded_and_replayed_by_update(tmp_path):
     assert len(reports) == 2 and calls == ["fr", "fr"]
     fams = {fam for r in reports for fam in r.repos}
     assert fams == {"translations", "translated-alt"}
+
+
+# ------------------------------------------------------------------ P8+ : --lang (traduction découplée)
+def test_two_variants_same_lang_converge_into_one_translation_repo(tmp_path):
+    """Classique et full-art, deux --cards-as distincts, mais le MÊME --lang fr : leurs
+    TRANSLATION.txt convergent dans un seul dépôt translations-fr (pas un par variante)."""
+    src = _fr_mixed_source(tmp_path / "src")
+    out = tmp_path / "out"
+    ingest = lambda s, wd, on_progress=None: src
+    repobuild.build(["fr"], out, cards_as="translated-fr-classic", path_prefix="FR_classique",
+                    lang="fr", ingest=ingest, git_init=False)
+    repobuild.build(["fr"], out, cards_as="translated-fr-fullart", path_prefix="FR_alt",
+                    lang="fr", ingest=ingest, git_init=False)
+
+    # les cartes restent séparées par variante d'art...
+    assert (out / "translated-fr-classic" / "Leaders" / "Cards" / "OP01" / "OP01-001.png").is_file()
+    assert (out / "translated-fr-fullart" / "Leaders" / "Cards" / "OP01" / "OP01-001.png").is_file()
+    # ...mais la traduction est regroupée dans UN SEUL dépôt de langue, pas dupliquée par variante.
+    assert (out / "translations-fr" / "TRANSLATION.txt").is_file()
+    assert not (out / "translated-fr-classic" / "TRANSLATION.txt").exists()
+    assert not (out / "translated-fr-fullart" / "TRANSLATION.txt").exists()
+
+
+def test_different_langs_never_collide():
+    fr = repobuild.route("translation", None, "TRANSLATION.txt", "translated", True, lang="fr")
+    es = repobuild.route("translation", None, "TRANSLATION.txt", "translated", True, lang="es")
+    assert fr[0] != es[0]   # translations-fr vs translations-es : jamais le même dépôt
+
+
+def test_lang_recorded_and_replayed_by_update(tmp_path):
+    src = _fr_mixed_source(tmp_path / "src")
+    out = tmp_path / "out"
+    ingest = lambda s, wd, on_progress=None: src
+    repobuild.build(["fr"], out, cards_as="translated", path_prefix="FR_classique",
+                    lang="fr", ingest=ingest, git_init=False)
+    log = repobuild.load_build_log(out)
+    assert log[0]["lang"] == "fr"
+
+    reports = repobuild.update(out, ingest=ingest)
+    assert reports[0].repos.get("translations-fr") is not None
 
 
 def test_update_replays_recorded_sources_without_reasking(tmp_path):

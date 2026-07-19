@@ -408,6 +408,27 @@ catégories `cards`/`don` (les seules canonicalisées par id, donc à risque de 
 traduction/playmats/dos de carte sont des assets partagés, toujours inclus quel que soit le
 préfixe — pas besoin d'un 3ᵉ appel juste pour la traduction. +2 tests. 165 verts.
 
+### (h) `--lang` — découpler la langue de traduction de la variante d'art (2026-07-19)
+
+Suite directe : en donnant les vrais noms de dossiers (`FR_classique`, `FR_full_art`),
+l'utilisateur a soulevé que `TRANSLATION.txt` pourrait un jour exister pour d'autres langues.
+Vrai angle mort : la traduction suivait un alias FIXE (`translations`), indépendant de
+`cards_as` — une langue future (ES) écraserait la FR, et deux variantes d'art de la MÊME
+langue partageant l'alias `translated` se disputaient déjà le même fichier.
+
+- `route(..., lang=...)` : la catégorie `translation` va vers `translations-<lang>` si `lang`
+  est fourni (sinon alias fixe `translations`, inchangé) — un axe INDÉPENDANT de `cards_as`.
+- `build(..., lang=...)` / CLI `--lang fr` : deux builds de variantes d'art différentes
+  (classique, full-art) avec le MÊME `--lang fr` regroupent leur traduction dans **un seul**
+  dépôt `translations-fr/`, tout en gardant leurs cartes dans des dépôts séparés
+  (`--cards-as` distincts). Une langue future (`--lang es`) va dans `translations-es/`, sans
+  jamais toucher au FR.
+- Journal `.repos-build.json` : `lang` rejoint la clé de dédup (rétrocompatible, `None` si
+  absent) ; `update()` le rejoue.
+- Tests : routage `lang` indépendant de `cards_as`, deux variantes convergent vers un seul
+  dépôt de langue, langues distinctes jamais confondues, journal + replay. 169 verts. Validé
+  en CLI réel avec les noms exacts de l'utilisateur (`FR_classique`/`FR_full_art`).
+
 ## Chantier P9 — Publier le format « pack de decks » (contribution communautaire)
 
 Objectif : permettre à la communauté de créer et partager des packs de decks (le format
