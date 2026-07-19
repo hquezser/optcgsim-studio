@@ -182,7 +182,7 @@ taille par type avant de lancer. Types reconnus via `card_types.json` (id → Le
 Character / Event / Stage) ; DON traité comme sa propre catégorie.
 
 Conseil d'organisation des dépôts (P8) : les images étant volumineuses, héberger
-**plusieurs dépôts par famille** (alt-arts / traductions / playmats-cardbacks-dons) plutôt
+**plusieurs dépôts par famille** (alt-arts / traductions / playmats / cardbacks) plutôt
 qu'un seul — on reste sous les limites GitHub (repos < ~1 Go) et chaque famille se met à
 jour indépendamment. Le studio gère autant de sources suivies que voulu.
 
@@ -202,11 +202,13 @@ studio repos build <lien-FR> --out ~/optcgsim-repos --cards-as translated   # ca
 
 Chaque fichier est classé (via `classify_rel` + `cardmeta`) et routé :
 
-- **cartes** → dépôt de la famille passée (`--cards-as alt` → `cards-alt/`, `translated` →
+- **cartes** (dont **DON!! alternatif**, qui est un reskin de carte, pas un dos de carte) →
+  dépôt de la famille passée (`--cards-as alt` → `cards-alt/`, `translated` →
   `translations/`), **sous-classées par type** : `Leaders/Cards/<SET>/<ID>.png`,
-  `Events/…`, etc. → l'import granulaire `--only-type` marche direct sur le dépôt poussé, et
-  une famille trop lourde se scinde en déplaçant un simple sous-dossier de type ;
-- `Cards/Don/` → `cardbacks-don/`, `CardBacks/` → `cardbacks-don/`, `Playmats/` + fonds →
+  `Events/…`, `Don/Cards/Don/…`, etc. → l'import granulaire `--only-type` marche direct sur
+  le dépôt poussé, et une famille trop lourde se scinde en déplaçant un simple sous-dossier
+  de type ;
+- `CardBacks/` (vrais dos de carte uniquement) → `cardbacks/`, `Playmats/` + fonds →
   `playmats/`, `TRANSLATION.txt` → `translations/`.
 
 Sources : **GitHub** (dépôt/zip) et **Dropbox** (dossier partagé → zip) sont téléchargés

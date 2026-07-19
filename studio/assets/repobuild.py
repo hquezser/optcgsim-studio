@@ -4,14 +4,16 @@
 zip), **Google Drive** (fichier/zip partagé) — produit une arborescence **git-ready par
 famille**, prête à pousser sur des dépôts PRIVÉS distincts :
 
-    cards-alt/       Leaders/Cards/<SET>/<ID>.png, Events/…      (arts alternatifs)
-    translations/    Leaders/Cards/… + TRANSLATION.txt           (cartes traduites)
+    cards-alt/       Leaders/Cards/<SET>/<ID>.png, Events/…, Don/Cards/Don/…  (arts alternatifs)
+    translations/    Leaders/Cards/… + TRANSLATION.txt                       (cartes traduites)
     playmats/        Playmats/<nom>.png, background.jpg
-    cardbacks-don/   CardBacks/<nom>.png, Cards/Don/Don.png
+    cardbacks/       CardBacks/<nom>.png                        (dos de cartes UNIQUEMENT)
 
 Pourquoi plusieurs dépôts (décision P8) : les images sont lourdes ; un dépôt par famille
 reste sous les limites GitHub et se met à jour indépendamment. Les cartes sont **sous-classées
-par type** (Leaders/Characters/Events/Stages/Unknown) via `cardmeta`, de sorte que :
+par type** (Leaders/Characters/Events/Stages/Don/Unknown) via `cardmeta` (Don à part : c'est
+un reskin d'asset carte, PAS un dos de carte — `CardBacks/` reste réservé aux vrais dos), de
+sorte que :
   1. l'import granulaire P8 (`--only-type leader`) fonctionne directement sur le dépôt poussé ;
   2. si une famille dépasse la limite, on scinde en déplaçant un simple sous-dossier de type.
 
@@ -42,12 +44,16 @@ from . import cardmeta, packlib
 CARD_TYPE_DIR = {"Leader": "Leaders", "Character": "Characters",
                  "Event": "Events", "Stage": "Stages"}
 UNKNOWN_TYPE_DIR = "Unknown"
-_CARD_TYPE_DIRS = set(CARD_TYPE_DIR.values()) | {UNKNOWN_TYPE_DIR}
+# DON!! n'a pas d'id de carte (cid=None dans classify_rel) donc pas de card_type() cardmeta,
+# mais c'est bien une CARTE (un reskin d'asset carte) et non un dos de carte : son propre
+# sous-dossier de type, dans la famille CARTES (cards-alt/translations), pas cardbacks.
+DON_TYPE_DIR = "Don"
+_CARD_TYPE_DIRS = set(CARD_TYPE_DIR.values()) | {UNKNOWN_TYPE_DIR, DON_TYPE_DIR}
 
-# Familles à destination déterministe (indépendantes du tag `cards_as`).
-_FIXED_FAMILY = {"don": "cardbacks-don", "cardbacks": "cardbacks-don",
-                 "playmats": "playmats", "backgrounds": "playmats",
-                 "translation": "translations"}
+# Familles à destination déterministe (indépendantes du tag `cards_as`) — UNIQUEMENT les
+# vrais dos de cartes et le reste ; DON!! est routé avec les cartes (cf. route()).
+_FIXED_FAMILY = {"cardbacks": "cardbacks", "playmats": "playmats",
+                 "backgrounds": "playmats", "translation": "translations"}
 
 GITHUB_SOFT_LIMIT = 900 * 1024 * 1024   # ~900 Mo : au-delà, on conseille de scinder
 _LOG_NAME = ".repos-build.json"
@@ -116,7 +122,11 @@ def route(cat: str, cid: str | None, filename: str, cards_as: str,
             return fam, f"{sub}/Cards/{set_}/{name}"
         return fam, f"Cards/{set_}/{name}"
     if cat == "don":
-        return "cardbacks-don", f"Cards/Don/{filename}"
+        # une carte (reskin de la DON!!), pas un dos de carte -> famille CARTES.
+        fam = _card_family(cards_as)
+        if split_cards_by_type:
+            return fam, f"{DON_TYPE_DIR}/Cards/Don/{filename}"
+        return fam, f"Cards/Don/{filename}"
     if cat in _FIXED_FAMILY:
         prefix = {"cardbacks": "CardBacks/", "playmats": "Playmats/"}.get(cat, "")
         return _FIXED_FAMILY[cat], f"{prefix}{filename}"

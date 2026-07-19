@@ -350,6 +350,30 @@ retaper toutes les sources à chaque fois.
   `update()` rejoue sans repasser les sources, erreur propre si `--out` jamais construit.
   159 verts.
 
+### (e) Fix — DON!! alternatif mal classé (retour d'usage réel, 2026-07-19)
+
+Remontée après un premier import réel depuis Dropbox : les alternatifs de DON!! atterrissaient
+dans `cardbacks-don/` comme si c'était des dos de carte, alors que ce sont des **cartes**
+(reskins d'un asset carte unique), même famille que les alt-arts. Erreur de modélisation
+initiale (j'avais bundlé DON avec les vrais dos de carte dans une même famille par commodité).
+
+- `route()` : la catégorie `don` va maintenant dans la famille **CARTES** (`cards-alt` /
+  `translations` selon `--cards-as`), sous son propre sous-dossier de type `Don/` (parallèle à
+  Leaders/Characters/Events/Stages) — `Don/Cards/Don/<fichier>`.
+- Le dépôt `cardbacks-don` est **renommé `cardbacks`** : ne contient plus que les VRAIS dos de
+  carte (`CardBacks/*.png`).
+- Compatible import inchangé : `classify_rel` retrouve la catégorie `don` en cherchant
+  l'ancêtre `Cards/` puis `Don/` dans le chemin, quel que soit le préfixe de type devant —
+  vérifié par trace du code, pas juste supposé.
+- **⚠️ Ne s'auto-corrige PAS sur un `--out` déjà généré avec l'ancien code** : comme le NOM de
+  famille change (`cardbacks-don` -> `cardbacks`), le mécanisme de diff/orphelins ne voit rien
+  à nettoyer (ce n'est pas un renommage de fichier dans la même famille, c'est un dossier que
+  le nouveau code ne touche plus jamais). Qui a déjà lancé `repos build` avant ce fix doit
+  **supprimer manuellement** l'ancien `cardbacks-don/` (ou le renommer et retirer les images
+  DON!! qui y traînent) avant de relancer `repos build`/`repos update`.
+- Tests : `route("don", …)` -> famille cartes ; build de bout en bout vérifie l'absence de
+  `cardbacks-don/` et la présence de `cards-alt/Don/…`. 160 verts.
+
 ## Chantier P9 — Publier le format « pack de decks » (contribution communautaire)
 
 Objectif : permettre à la communauté de créer et partager des packs de decks (le format

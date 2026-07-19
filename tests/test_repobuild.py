@@ -37,11 +37,17 @@ def test_route_cards_translated_family_and_txt():
         "translations", "TRANSLATION.txt")
 
 
-def test_route_fixed_families():
+def test_route_don_goes_to_cards_family_not_cardbacks():
+    # DON!! alternatif = un reskin de CARTE, pas un dos de carte -> famille cartes, type "Don".
     assert repobuild.route("don", None, "Don.png", "alt", True) == (
-        "cardbacks-don", "Cards/Don/Don.png")
+        "cards-alt", "Don/Cards/Don/Don.png")
+    assert repobuild.route("don", None, "Don_Wano.png", "translated", True) == (
+        "translations", "Don/Cards/Don/Don_Wano.png")
+
+
+def test_route_fixed_families():
     assert repobuild.route("cardbacks", None, "CardBackRegular.png", "alt", True) == (
-        "cardbacks-don", "CardBacks/CardBackRegular.png")
+        "cardbacks", "CardBacks/CardBackRegular.png")
     assert repobuild.route("playmats", None, "Blue.png", "alt", True) == (
         "playmats", "Playmats/Blue.png")
     assert repobuild.route("backgrounds", None, "background.jpg", "alt", True) == (
@@ -52,6 +58,8 @@ def test_route_fixed_families():
 def test_route_no_split_keeps_flat_cards():
     assert repobuild.route("cards", "OP01-001", "OP01-001.png", "alt", False) == (
         "cards-alt", "Cards/OP01/OP01-001.png")
+    assert repobuild.route("don", None, "Don.png", "alt", False) == (
+        "cards-alt", "Cards/Don/Don.png")
 
 
 def test_route_unknown_type_bucket():
@@ -80,21 +88,28 @@ def test_build_routes_into_family_repos(tmp_path):
 
     assert (out / "cards-alt" / "Leaders" / "Cards" / "OP01" / "OP01-001.png").is_file()
     assert (out / "cards-alt" / "Characters" / "Cards" / "OP01" / "OP01-016.png").is_file()
-    assert (out / "cardbacks-don" / "Cards" / "Don" / "Don.png").is_file()
-    assert (out / "cardbacks-don" / "CardBacks" / "CardBackRegular.png").is_file()
+    # DON!! = un reskin de CARTE (pas un dos de carte) -> famille cartes, type "Don".
+    assert (out / "cards-alt" / "Don" / "Cards" / "Don" / "Don.png").is_file()
+    assert not (out / "cardbacks-don").exists()
+    assert (out / "cardbacks" / "CardBacks" / "CardBackRegular.png").is_file()
     assert (out / "playmats" / "Playmats" / "Blue.png").is_file()
     assert (out / "translations" / "TRANSLATION.txt").is_file()
     # README.md source non reconnu -> non classé, pas copié
     assert rep.unclassified and rep.unclassified[0]["path"] == "README.md"
 
-    # MANIFEST par dépôt, avec compte par type pour les cartes
+    # MANIFEST par dépôt, avec compte par type pour les cartes (Don inclus)
     man = json.loads((out / "cards-alt" / "MANIFEST.json").read_text())
-    assert man["family"] == "cards-alt" and man["by_type"] == {"Leaders": 1, "Characters": 1}
-    assert man["file_count"] == 2
+    assert man["family"] == "cards-alt"
+    assert man["by_type"] == {"Leaders": 1, "Characters": 1, "Don": 1}
+    assert man["file_count"] == 3
     # premier build : tout est "ajouté", rien de modifié/orphelin
     assert sorted(rep.repos["cards-alt"].added) == [
-        "Characters/Cards/OP01/OP01-016.png", "Leaders/Cards/OP01/OP01-001.png"]
+        "Characters/Cards/OP01/OP01-016.png", "Don/Cards/Don/Don.png",
+        "Leaders/Cards/OP01/OP01-001.png"]
     assert rep.repos["cards-alt"].changed == [] and rep.repos["cards-alt"].orphans == []
+    # cardbacks reste un dépôt à part, dédié aux VRAIS dos de cartes
+    cb = json.loads((out / "cardbacks" / "MANIFEST.json").read_text())
+    assert cb["file_count"] == 1 and cb["by_type"] == {}
 
 
 def test_build_collision_last_source_wins(tmp_path):
