@@ -176,6 +176,12 @@
 
   <section>
     <h2>Mes decks</h2>
+    <div id="decks-bulk" class="row" style="display:none;align-items:center;gap:10px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+        <input type="checkbox" id="decks-select-all" onchange="toggleAllDecks(this.checked)"
+               style="width:auto"> tout sélectionner</label>
+      <button class="mini ghost" onclick="removeSelectedDecks()">Retirer la sélection</button>
+    </div>
     <div id="decks"><div class="empty">Aucun deck importé.</div></div>
   </section>
 
@@ -268,12 +274,47 @@ async function removeSelectedPacks(){
 async function loadDecks(){
   const decks = await api('/decks');
   const el = $('#decks');
-  if(!decks.length){ el.innerHTML='<div class="empty">Aucun deck importé.</div>'; return; }
+  $('#decks-bulk').style.display = decks.length ? 'flex' : 'none';
+  if(!decks.length){
+    el.innerHTML='<div class="empty">Aucun deck importé.</div>';
+    $('#decks-select-all').checked = false;
+    return;
+  }
   el.innerHTML = decks.map(d=>{
     const n = Object.values(d.cards).reduce((a,b)=>a+b,0);
-    return `<div class="deck"><span class="l">${d.name}</span>
-      <span class="adv">${d.leader} · ${n} cartes${d.tags.length?' · '+d.tags.join(', '):''}</span></div>`;
+    return `<div class="deck" data-id="${d.id}">
+      <input type="checkbox" class="deck-select" value="${d.id}" style="width:auto">
+      <span class="l">${d.name}</span>
+      <span class="adv">${d.leader} · ${n} cartes${d.tags.length?' · '+d.tags.join(', '):''}</span>
+      <button class="mini ghost" style="margin-left:auto" onclick="removeDeck('${d.id}')">Retirer</button>
+    </div>`;
   }).join('');
+}
+
+function toggleAllDecks(checked){
+  document.querySelectorAll('.deck-select').forEach(c => c.checked = checked);
+}
+
+async function removeDeck(id){
+  try{
+    const r = await api(`/decks/${encodeURIComponent(id)}/remove`, {method:'POST'});
+    toast(`« ${r.name} » retiré`+(r.removed_file ? ' (deck retiré du sim aussi).' : '.'));
+    loadDecks();
+  }catch(e){ toast(e.message, 1); }
+}
+
+async function removeSelectedDecks(){
+  const ids = [...document.querySelectorAll('.deck-select:checked')].map(c => c.value);
+  if(!ids.length) return toast('Sélectionne au moins un deck', 1);
+  if(!confirm(`Retirer ${ids.length} deck(s) sélectionné(s) ? (supprime aussi leur .txt `
+             +'du sim, sauf si modifié depuis l\'import)')) return;
+  let ok = 0;
+  for(const id of ids){
+    try{ await api(`/decks/${encodeURIComponent(id)}/remove`, {method:'POST'}); ok++; }
+    catch(e){ toast(e.message, 1); }
+  }
+  toast(`${ok}/${ids.length} deck(s) retiré(s)`+(ok < ids.length ? `, ${ids.length - ok} échec(s).` : '.'));
+  loadDecks();
 }
 
 // ------------------------------------------------------------------ jobs de fond

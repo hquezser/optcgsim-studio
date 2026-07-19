@@ -15,6 +15,7 @@ Endpoints (préfixe /api) :
     GET  /packs/<name>/coverage     -> couverture par deck (le crochet d'adoption)
     GET  /decks                     -> decks en base
     POST /decks/import {text?|url?, name?, tags?}
+    POST /decks/<id>/remove         -> tombstone en base + supprime le .txt du sim (si intact)
     POST /collections/resolve {source} -> résout un collection.json (P10-c) sans rien importer
 
 Écriture (apply/remove) : passe par AssetManager -> mêmes garde-fous (backup, atomique,
@@ -101,7 +102,7 @@ class StudioService:
 
     def decks(self) -> list[dict]:
         with self._store() as store:
-            return [{"name": d["name"], "leader": d["leader"],
+            return [{"id": d["id"], "name": d["name"], "leader": d["leader"],
                      "cards": d["cards"], "tags": d["tags"]}
                     for d in store.list("decks")]
 
@@ -314,6 +315,25 @@ class StudioService:
         return {"name": deck_name, "leader": deck.leader, "total": deck.total,
                 "path": path}
 
+    def remove_deck(self, deck_id: str) -> dict:
+        """Retire un deck : tombstone en base + supprime son `.txt` du sim, mais SEULEMENT
+        s'il correspond encore exactement à ce qu'on a écrit à l'import (même garde-fous
+        d'idempotence que `save_to_sim`) — évite d'effacer un fichier retapé depuis par
+        l'utilisateur qui porterait le même nom assaini."""
+        with self._store() as store:
+            d = store.get("decks", deck_id)
+            if d is None or d.get("deleted"):
+                raise KeyError(deck_id)
+            store.delete("decks", deck_id)
+        removed_file = False
+        path = importer.deck_txt_path(d["name"], self.install.persistent)
+        if path.exists():
+            expected = importer.Decklist(leader=d["leader"], cards=d["cards"]).to_native_text()
+            if path.read_text(errors="ignore") == expected:
+                path.unlink()
+                removed_file = True
+        return {"name": d["name"], "removed_file": removed_file}
+
     def import_deckpack(self, source: str, on_progress=None) -> dict:
         """Importe un pack de decks (deckpack.json) : résout tous les decks puis persiste
         ceux qui réussissent (un échec n'empêche pas les autres). Job de fond."""
@@ -474,6 +494,9 @@ def make_handler(svc: StudioService):
                     return self._send(200, svc.import_deck(
                         text=b.get("text"), url=b.get("url"),
                         name=b.get("name"), tags=b.get("tags")))
+                m = re.match(r"^/api/decks/([^/]+)/remove$", path)
+                if m:
+                    return self._send(200, svc.remove_deck(_dec(m.group(1))))
                 if path == "/api/deckpacks/validate":
                     b = self._body_json()
                     return self._send(200, svc.validate_deckpack(b["source"]))

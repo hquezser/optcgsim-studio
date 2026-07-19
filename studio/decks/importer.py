@@ -79,14 +79,21 @@ class Decklist:
 
         Refuse d'écraser un deck existant sauf s'il porte déjà notre contenu (idempotent).
         """
-        safe = re.sub(r"[^\w \-']", "_", name).strip() or "Imported"
-        path = persistent_dir / f"{safe}.txt"
+        path = deck_txt_path(name, persistent_dir)
         text = self.to_native_text()
         if path.exists() and path.read_text(errors="ignore") != text:
             raise ImportError_(
                 f"{path.name} existe déjà avec un contenu différent — choisir un autre nom")
         path.write_text(text)
         return path
+
+
+def deck_txt_path(name: str, persistent_dir: Path) -> Path:
+    """Chemin `.txt` où le sim lit/écrit un deck de ce nom (racine du dossier persistant) —
+    même assainissement que `save_to_sim`, factorisé pour que la suppression (studio) vise
+    exactement le même fichier que l'écriture."""
+    safe = re.sub(r"[^\w \-']", "_", name).strip() or "Imported"
+    return Path(persistent_dir) / f"{safe}.txt"
 
 
 # --------------------------------------------------------------------------- parsing texte

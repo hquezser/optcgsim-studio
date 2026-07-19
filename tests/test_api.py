@@ -81,6 +81,32 @@ def test_import_deck_writes_sim_and_db(svc):
     assert svc.decks()[0]["name"] == "D"
 
 
+# ------------------------------------------------------------------ retrait de deck
+def test_remove_deck_deletes_db_record_and_sim_file(svc):
+    r = svc.import_deck(text=_DECK50, name="ARetirer")
+    deck_id = svc.decks()[0]["id"]
+    assert Path(r["path"]).exists()
+    rem = svc.remove_deck(deck_id)
+    assert rem == {"name": "ARetirer", "removed_file": True}
+    assert svc.decks() == []
+    assert not Path(r["path"]).exists()
+
+
+def test_remove_deck_keeps_file_if_modified_since_import(svc):
+    r = svc.import_deck(text=_DECK50, name="Modifié")
+    deck_id = svc.decks()[0]["id"]
+    Path(r["path"]).write_text("contenu retapé à la main, plus le deck importé\n")
+    rem = svc.remove_deck(deck_id)
+    assert rem == {"name": "Modifié", "removed_file": False}
+    assert svc.decks() == []                 # tombstone en base malgré tout
+    assert Path(r["path"]).exists()           # fichier laissé intact
+
+
+def test_remove_deck_unknown_id_raises_keyerror(svc):
+    with pytest.raises(KeyError):
+        svc.remove_deck("inconnu")
+
+
 # ------------------------------------------------------------------ P6 : pack de decks
 _DECK50 = "1xOP01-060\n" + "\n".join(f"4xAA{i:02d}-001" for i in range(12)) + "\n2xBB01-001"
 
@@ -131,6 +157,26 @@ def test_http_deckpack_is_job_based(server, svc, tmp_path):
     st = _wait_job(server, r["job_id"])
     assert st["status"] == "done"
     assert st["result"]["imported"][0]["name"] == "Solo"
+
+
+def test_http_decks_remove(server, svc):
+    code, r = _post(server, "/api/decks/import", {"text": _DECK50, "name": "AuHttp"})
+    assert code == 200
+    deck_id = svc.decks()[0]["id"]
+    code, r = _post(server, f"/api/decks/{deck_id}/remove", {})
+    assert code == 200 and r == {"name": "AuHttp", "removed_file": True}
+    assert svc.decks() == []
+
+
+def test_http_decks_remove_unknown_is_404(server):
+    req = urllib.request.Request(server + "/api/decks/inconnu/remove",
+                                 data=b"{}", method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req)
+        assert False, "aurait dû lever 404"
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
 
 
 # ------------------------------------------------------------------ serveur HTTP réel

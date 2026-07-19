@@ -118,6 +118,29 @@ plus anodin). Vérifié en direct dans le navigateur (chrome-devtools MCP, sandb
 sélection de 2 packs → confirmation → les deux disparaissent de la bibliothèque, toast
 récapitulatif (« 2/2 pack(s) retiré(s) »).
 
+**Ajout (2026-07-19)** — retrait en masse de DECKS : symétrique au précédent pour la
+section « Mes decks ». Chaque deck a une case à cocher, une case « tout sélectionner » et
+un bouton « Retirer » (`toggleAllDecks()`/`removeDeck(id)`/`removeSelectedDecks()`,
+`index.html`) — appelle la nouvelle route `POST /api/decks/<id>/remove` séquentiellement.
+Contrairement au retrait de pack (qui réutilise `remove()` existant), le retrait de deck
+exigeait une route dédiée car l'API decks n'avait que `add`/`list` :
+
+- `studio/decks/importer.py` — helper `deck_txt_path(name, persistent_dir)` extrait la
+  logique de sanitization du nom (déjà utilisée par `save_to_sim`) pour la réutiliser
+  côté suppression.
+- `studio/api/server.py` — `remove_deck(deck_id)` : tombstone l'enregistrement DB
+  (`removed_at = now`) PUIS supprime le `.txt` du sim persistant **uniquement si son
+  contenu correspond encore** à ce qui a été écrit à l'import (garde d'idempotence : si
+  l'utilisateur a édité le deck dans le sim depuis, on ne détruit pas son travail).
+  Route `POST /api/decks/<id>/remove` → `{name, removed_file: bool}` ; id inconnu →
+  `KeyError` → 404.
+- Tests `tests/test_api.py` (section « P10-d : retrait de deck ») : 5 cas — suppression
+  DB+fichier, fichier conservé si modifié depuis l'import, id inconnu → KeyError, route
+  HTTP 200, route HTTP 404. Suite à 216 verts (was 211).
+- Vérifié en direct (chrome-devtools MCP, sandbox jetable) : 2 decks importés →
+  sélection + confirmation → « 2/2 deck(s) retiré(s) », les deux `.txt` supprimés du
+  répertoire persistant du sim, DB vide.
+
 ## Chantier P5 — Catalogue communautaire — ABANDONNÉ (2026-07-19)
 
 > **Décision** : abandonné. Un catalogue LOCAL générique fait doublon avec l'existant —
