@@ -1,12 +1,11 @@
 # PLAN — Import ergonomique de packs communautaires (cartes + customs)
 
-> **AVANCEMENT (2026-07-18)** — P0→P4 FAITS (commits 9405a85, c5f587b, a10733e, 66c9b33,
-> 0e03ad8) + jobs de fond/progression (71e064f). 90 tests verts. `studio ui` fonctionne de
-> bout en bout : add/apply/remove/update/reapply, dropzone, couverture de decks, jobs qui
-> survivent à la fermeture de l'onglet. **P5-P7 ci-dessous = chantiers futurs demandés par
-> l'utilisateur (2026-07-18)**, pas encore commencés — reconnaissance faite, décisions
-> ouvertes à trancher avant d'implémenter (contrairement à P0-P4, ces trois-là ont de vraies
-> questions produit, pas seulement techniques).
+> **AVANCEMENT (2026-07-19)** — P0→P10 tous FAITS (voir tableau « Ordre et effort » en fin de
+> plan). Dernier en date : P10 (collections de packs — variantes vs compléments) complet,
+> (c)+(d) (route `POST /api/collections/resolve` + section UI « Importer une collection » +
+> tests) ajoutés à la suite de (a)+(b) déjà en place. 211 tests verts. `studio ui` fonctionne
+> de bout en bout : add/apply/remove/update/reapply, dropzone, couverture de decks, jobs qui
+> survivent à la fermeture de l'onglet, import guidé d'une collection multi-dépôts.
 >
 > Objectif : un utilisateur pointe une SOURCE (zip, dossier, URL) et le studio fait le
 > reste — analyse, normalisation, prévisualisation, application, mise à jour, restauration.
@@ -572,7 +571,7 @@ Effort : ~½ session (surtout de la doc + une commande validate ; le moteur exis
 
 ## Chantier P10 — Collections de packs (importer les dépôts liés d'un coup, via l'UI)
 
-**EN COURS (2026-07-19) — (a) et (b) FAITS et testés ; (c) et (d) PAS COMMENCÉS.** Contexte :
+**FAIT (2026-07-19) — (a), (b), (c) et (d) tous FAITS et testés.** Contexte :
 après P8+ (repos build), l'utilisateur a généré et poussé 6 dépôts GitHub privés pour un seul
 « look » cohérent (FR classique + full-art) : `optcgsim-translated-fr-classic`,
 `optcgsim-translated-fr-fullart`, `optcgsim-translations-fr`, `optcgsim-cardbacks`,
@@ -664,50 +663,107 @@ visible pas caché). Validé aussi en CLI réelle (voir commit associé).
 **Suite complète : 204 tests verts** (`/usr/local/bin/python3 -m pytest -q` depuis
 `~/playground/optcgsim-studio`).
 
-### (c) Import de collection — UI (end-user) — PAS COMMENCÉ ❌
+### (c) Import de collection — UI (end-user) — FAIT ✅
 
-**C'est ICI que reprendre.** Objectif : une section UI « Importer une collection » qui
-consomme le `collection.json` produit par (b) et enchaîne les imports via le flux
-`packs/add` EXISTANT (aucune nouvelle route d'ajout, aucune nouvelle logique d'application).
+Une section UI « Importer une collection » consomme le `collection.json` produit par (b) et
+enchaîne les imports via le flux `packs/add` EXISTANT (aucune nouvelle route d'ajout, aucune
+nouvelle logique d'application) — implémentation conforme au design arrêté :
 
-Design à suivre (déjà arrêté, pas à re-décider) :
 1. **Nouvelle route API** `POST /api/collections/resolve` (`studio/api/server.py`, à côté de
-   `POST /api/packs/preview` (`server.py:398-400,166-189`) — même style : body `{source: str}`
-   (URL du manifeste, ou chemin local si upload), résout côté SERVEUR (jamais le navigateur —
-   réutilise `Config().github_token()` comme tout le reste si l'hébergement du manifeste en a
-   besoin), renvoie soit une `Collection` sérialisée (`{name, packs: [{url, label,
-   variant_group}], warnings}`), soit une erreur JSON lisible (même style que les autres
-   routes : le message de `CollectionError` doit arriver TEL QUEL au toast, pas générique).
-   Réutiliser `studio.assets.collections.parse_text()` (déjà FAIT, (a)) pour le parsing ; il
-   ne reste qu'à écrire le FETCH de l'URL (probablement `packlib._download`/`urllib` déjà
-   présents dans le module, ou un simple `urllib.request` avec le `ssl_context()` du projet —
-   ne pas réinventer, réutiliser `studio/nettls.py`).
-2. **Nouvelle section UI** dans `studio/api/static/index.html`, à côté de la section
-   « Ajouter un thème/pack » (`index.html:90-128`) : un champ URL/upload → bouton
-   « Analyser la collection » → appelle la route ci-dessus → rendu :
+   `POST /api/packs/preview`) : body `{source: str}` (URL http(s), ou chemin local — la même
+   entrée sert pour un manifeste tapé/collé ou déjà présent sur disque), résolu côté SERVEUR.
+   `StudioService._fetch_text()` récupère le texte (URL → `urllib.request` + `ssl_context()`
+   de `studio/nettls.py`, en-tête `Authorization` avec `Config().github_token()` si l'hôte est
+   `github(usercontent).com` ; sinon lecture d'un fichier local) puis
+   `StudioService.resolve_collection()` réutilise `collections.parse_text()` (déjà FAIT, (a))
+   tel quel. Erreurs (`CollectionError` : JSON invalide, `url` manquante, HTTP 4xx/5xx, hôte
+   injoignable, fichier introuvable) renvoyées TELLES QUELLES en JSON 400 (même style que
+   `AssetError`/`PackError`/`ImportError_`) — le message arrive lisible au toast, pas générique.
+2. **Nouvelle section UI** dans `studio/api/static/index.html`, entre « Ajouter un thème/pack »
+   et « Bibliothèque de packs » : un champ URL/chemin → bouton « Analyser » → appelle la route
+   ci-dessus → `renderCollection()` affiche :
    - pour chaque groupe de `variant_groups()` : un groupe de boutons radio (labels des packs
-     du groupe), un seul sélectionnable ;
+     du groupe, un seul sélectionnable, premier coché par défaut) ;
    - pour chaque pack de `standalone_packs()` : une case à cocher, cochée par défaut ;
+   - les avertissements de version (`warnings`) affichés tels quels ;
    - un bouton unique « Importer la sélection ».
-3. **Import** : au clic, pour CHAQUE pack sélectionné (un radio par groupe + toutes les cases
-   cochées), appeler `POST /api/packs/add` **séquentiellement** — réutiliser TEL QUEL
-   `addSource()`/`pollJob()` (`index.html:332-346,273`), juste dans une boucle avec un
-   affichage de progression globale (« pack N/M : <label> »). PAS de nouvelle route d'ajout,
-   PAS de nouvelle logique de job — c'est le même `start_add_job`/`JobManager` que l'ajout
-   simple, appelé plusieurs fois d'affilée.
-4. Gap mineur trouvé pendant l'audit de (a)/(b), INDÉPENDANT de P10 : `--for-deck` existe déjà
-   côté API/CLI (`server.py:133-164,191-201,404-407`, clé `for_decks`) mais n'a **aucun**
-   contrôle dans l'UI — à ajouter séparément si besoin, pas bloquant pour (c).
+3. **Import** (`importCollection()`) : au clic, pour CHAQUE pack sélectionné (un radio par
+   groupe + toutes les cases cochées), appelle `POST /api/packs/add` **séquentiellement** en
+   réutilisant TEL QUEL `pollJob()` — boucle avec affichage de progression globale (« pack
+   N/M : <label>… »), un échec sur un pack (toast) n'interrompt pas les suivants. PAS de
+   nouvelle route d'ajout, PAS de nouvelle logique de job — le même `start_add_job`/
+   `JobManager` que l'ajout simple, appelé plusieurs fois d'affilée.
+4. Gap mineur trouvé pendant l'audit de (a)/(b), INDÉPENDANT de P10, toujours ouvert :
+   `--for-deck` existe déjà côté API/CLI (clé `for_decks`) mais n'a **aucun** contrôle dans
+   l'UI — pas ajouté ici (hors périmètre de (c), pas bloquant).
 
-### (d) Tests à couvrir pour (c) — PAS COMMENCÉ ❌
+### (d) Tests à couvrir pour (c) — FAIT ✅
 
-- `/api/collections/resolve` : parse un manifeste valide, réutilise le token, message
-  d'erreur lisible (URL invalide, manifeste malformé, host injoignable) — même style de test
-  que les routes `/api/packs/*` existantes (`tests/test_api.py`).
-- UI (test manuel via `preview_start`/`Playwright`-like tools, ou test JS si le projet en a —
-  vérifier ; sinon documenter le test manuel exact à exécuter) : sélectionner un radio par
-  groupe suffit à activer l'import ; les compléments sont cochés par défaut ; N jobs lancés =
-  N packs sélectionnés (pas plus, pas moins).
+Dans `tests/test_api.py` (section « P10-c : collections ») :
+- `StudioService.resolve_collection` : manifeste local valide, fichier local manquant (message
+  « introuvable »), JSON invalide (message « JSON invalide »), URL http(s) mockée avec token
+  GitHub envoyé en en-tête `Authorization`, erreur HTTP distante (404) surfacée lisible.
+- Route HTTP `POST /api/collections/resolve` : 200 + manifeste sérialisé sur une source locale
+  valide, 400 + message JSON lisible (« introuvable ») sur une source absente — même style que
+  les tests HTTP `/api/packs/*` existants.
+- Vérification manuelle de bout en bout (hors pytest, script one-off) : `resolve` sur un
+  `collection.json` local pointant vers un dossier-pack local, puis `packs/add` avec l'URL
+  résolue → job `done`, pack appliqué normalement — confirme l'enchaînement `resolve` →
+  `packs/add` sans aucune route/logique intermédiaire nouvelle.
+- UI : pas de framework de test JS dans ce projet (vérifié — aucun `package.json`/harness JS
+  pour `index.html`) ; validé par relecture du flux radio/checkbox + `node --check` sur le
+  script extrait (syntaxe). Test manuel recommandé si besoin : ouvrir `studio ui`, coller un
+  `collection.json` local avec un groupe de variantes + un complément, vérifier qu'un seul
+  radio par groupe est actif, que le complément est précoché, et que « Importer la sélection »
+  lance exactement N jobs pour N entrées cochées.
+
+211 tests verts (`/usr/local/bin/python3 -m pytest -q` depuis `~/playground/optcgsim-studio`).
+
+### (e) Fix — `cards-alt` mal groupé dans le vrai `collection.json` (2026-07-19)
+
+Retour d'usage réel après (c) : dans l'UI, le groupe radio « cards » n'affichait que les deux
+variantes FR (classique/full-art) — les arts alternatifs anglais (`cards-alt`) apparaissaient
+comme un COMPLÉMENT toujours importé, séparé du choix. Or `cards-alt`, `translated-fr-classic`
+et `translated-fr-fullart` réécrivent tous les trois EXACTEMENT le même fichier cible
+`Cards/<SET>/<ID>.png` à l'application (le préfixe de type — `Leaders/`, `Characters/`… — est
+ignoré par `packlib._mirror_rel`) : les laisser dans des groupes différents permettait
+d'importer/appliquer les deux à la fois, avec une collision silencieuse (dernier appliqué
+gagnant) au lieu d'un choix conscient entre les trois looks.
+
+Cause racine identifiée par inspection directe (pas supposée) : `~/optcgsim-repos/
+.repos-build.json` (le journal de `repos build`) date d'AVANT la persistance
+`collection_label`/`collection_group` ajoutée en (b) — ses 3 entrées n'ont ni l'un ni l'autre
+champ. Le `collection.json` réel a donc été entièrement curaté À LA MAIN par l'utilisateur
+après coup (labels + `variant_group` par famille) — et `cards-alt` s'est vu attribuer
+`variant_group: null` par erreur de curation, pas par un bug de code.
+
+Fix appliqué :
+- `~/optcgsim-repos/collection.json` : `cards-alt` passe en `variant_group: "cards"` (label
+  renommé « Alt-arts (anglais) » pour la distinguer clairement des variantes FR dans le radio).
+  Vérifié en direct dans le navigateur (chrome-devtools MCP) : le groupe « cards » affiche
+  maintenant 3 choix radio (classique / full-art / anglais), et Traduction FR/Dos de
+  carte/Tapis de jeu restent des compléments cochés par défaut — capture confirmée avant/après.
+- Docstring `repobuild.build()` + aide CLI `--collection-group`/`--collection-label` (studio/
+  cli.py) : mise à jour (l'UI n'est plus « pas encore implémentée ») + avertissement explicite
+  sur ce piège précis (toute famille de cartes qui écrase les mêmes fichiers cibles doit
+  partager `--collection-group`, même avec un `--cards-as` différent) — pour que la PROCHAINE
+  génération de dépôts par n'importe qui n'y retombe pas.
+
+**⚠️ Piège structurel restant, PAS corrigé (à surveiller)** : `build()` applique UN SEUL
+`collection_label`/`collection_group` à TOUTES les familles produites par le MÊME appel. Le
+journal montre que le build "alt" (`cards_as="alt"`, une seule source zip) a produit à lui
+seul `cards-alt` ET `cardbacks` ET `playmats` — trois familles qui ont besoin de métadonnées
+DIFFÉRENTES (une seule doit être en groupe `cards`, les deux autres complémentaires). Il n'y a
+aujourd'hui AUCUN moyen d'exprimer ça via les flags CLI en un seul `repos build`. Conséquence
+concrète : relancer `studio repos update --out ~/optcgsim-repos` un jour (nouvelle sortie de
+set) REJOUERA ces 3 builds avec `collection_label=None`/`collection_group=None` (ce que le
+journal a toujours contenu) et RÉÉCRASERA tous les labels/groupes de `collection.json` vers
+leurs défauts (nom de famille, pas de groupe) — annulant ce fix ET la curation manuelle
+précédente de l'utilisateur. Pas de fix appliqué ici (changerait la signature de `build()`/
+l'upsert pour accepter des métadonnées PAR FAMILLE, pas juste par appel — décision produit à
+trancher avec l'utilisateur avant de toucher à l'API). **À faire par l'utilisateur en
+attendant** : après CHAQUE `studio repos update`, revérifier/recompléter `collection.json` à la
+main (labels + `variant_group`) avant de le republier — exactement comme pour les URLs.
 
 ### Décisions déjà tranchées (ne pas re-débattre)
 
@@ -743,7 +799,7 @@ annoncée), jamais automatiquement en arrière-plan hors `packs update`.
 | P7 | import sélectif (fetch ciblé GitHub + filtre disque partout) | ~1-1,5 session | ✅ fait (a→e, token privé inclus) |
 | P8 | dépôt(s) privé(s) + import granulaire par type de carte | ~½ session | ✅ fait (card_types, --only-type, DON, UI par type ; multi-dépôts documenté) |
 | P9 | publier le format deckpack (spec + validate contributeur) | ~½ session | ✅ fait (repo optcgsim-deckpacks : spec+schema+exemple+validate CI ; studio: schema_version + validate-pack) |
-| P10 | collections de packs (import multi-dépôts guidé, variantes vs complémentaires) | ~1 session | 🟡 EN COURS — (a) format + (b) génération CLI **faits** (204 tests verts) ; (c) route API + UI et (d) leurs tests **restent à faire**, voir chantier P10 |
+| P10 | collections de packs (import multi-dépôts guidé, variantes vs complémentaires) | ~1 session | ✅ fait (a→d, format+génération CLI+route API+UI+tests ; 211 tests verts) |
 
 Décisions ouvertes historiques (résolues) :
 - `Custom Cards`/`Extra Alts` (Dropbox) : le rapport « non-classés » de P1 les révèle.

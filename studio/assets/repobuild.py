@@ -246,16 +246,25 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
 
     `collection_label`/`collection_group` (P10) : à CHAQUE build, une entrée est upsertée (par
     famille — jamais de doublon) dans `<out_dir>/collection.json`, le manifeste VISIBLE (pas
-    caché comme `.repos-build.json`) que l'UI web pourra un jour résoudre pour importer tout un
-    groupe de dépôts liés en un geste (cf. docs/PLAN-import-packs.md, chantier P10 — la
-    résolution/UI n'est PAS ENCORE implémentée, seule la génération l'est). `collection_label`
-    est le texte affiché (défaut : le nom de famille) ; `collection_group`, s'il est fourni,
-    marque cette famille comme une VARIANTE ALTERNATIVE (radio) d'un groupe nommé — deux
-    familles du même groupe ne devraient jamais être importées TOUTES LES DEUX (ex. cartes
-    classiques vs full-art) ; sans `collection_group`, la famille est COMPLÉMENTAIRE (toujours
-    importée). L'URL du dépôt PUBLIÉ est inconnue à ce stade (le `git push` n'a pas encore eu
-    lieu) — le champ `url` est laissé vide, à remplir manuellement après coup (ou via un futur
-    `--collection-url`, non implémenté).
+    caché comme `.repos-build.json`) que l'UI web résout pour importer tout un groupe de
+    dépôts liés en un geste (section « Importer une collection », `POST
+    /api/collections/resolve`, cf. docs/PLAN-import-packs.md, chantier P10 — génération ET
+    résolution/UI implémentées). `collection_label` est le texte affiché (défaut : le nom de
+    famille) ; `collection_group`, s'il est fourni, marque cette famille comme une VARIANTE
+    ALTERNATIVE (radio, un seul choix) d'un groupe nommé — deux familles du même groupe ne
+    devraient jamais être importées TOUTES LES DEUX (ex. cartes classiques vs full-art) ; sans
+    `collection_group`, la famille est COMPLÉMENTAIRE (case cochée par défaut, toujours
+    importée). **Piège vérifié en usage réel** : `--collection-group` doit être partagé par
+    TOUTE famille de cartes qui écrase les MÊMES fichiers cibles, MÊME avec un `cards_as`
+    différent — ex. `cards-alt` (arts alternatifs anglais) et `translated-fr-classic`/
+    `translated-fr-fullart` réécrivent tous les trois `Cards/<SET>/<ID>.png` (le préfixe de
+    type est ignoré à l'application, cf. `packlib._mirror_rel`) : sans le même
+    `--collection-group cards` sur les TROIS builds, l'UI proposait `cards-alt` comme un
+    complément toujours importé, qui pouvait alors se retrouver appliqué EN MÊME TEMPS qu'une
+    variante FR (collision silencieuse, dernier appliqué gagnant, résultat non voulu par
+    l'utilisateur qui pensait choisir UN SEUL des trois). L'URL du dépôt PUBLIÉ est inconnue à
+    ce stade (le `git push` n'a pas encore eu lieu) — le champ `url` est laissé vide, à remplir
+    manuellement après coup (ou via un futur `--collection-url`, non implémenté).
 
     Ré-exécutable sans risque sur un `out_dir` déjà construit (les fichiers déjà présents sont
     remplacés, pas signalés en collision — une « collision » ne désigne QUE deux sources de CE

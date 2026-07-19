@@ -230,6 +230,108 @@ def test_http_inventory(server):
     assert code == 200 and inv["os"] == "test"
 
 
+# ------------------------------------------------------------------ P10-c : collections
+_COL_MANIFEST = {
+    "name": "FR classique + full-art",
+    "packs": [
+        {"url": "https://github.com/o/fr-classic", "label": "Cartes FR classiques",
+         "variant_group": "cards"},
+        {"url": "https://github.com/o/fr-fullart", "label": "Cartes FR alternatives",
+         "variant_group": "cards"},
+        {"url": "https://github.com/o/fr-trans", "label": "Traduction FR"},
+    ],
+}
+
+
+def test_resolve_collection_from_local_file(svc, tmp_path):
+    p = tmp_path / "collection.json"
+    p.write_text(json.dumps(_COL_MANIFEST))
+    r = svc.resolve_collection(str(p))
+    assert r["name"] == "FR classique + full-art"
+    assert len(r["packs"]) == 3
+    assert r["packs"][0]["variant_group"] == "cards"
+    assert r["warnings"] == []
+
+
+def test_resolve_collection_missing_local_file_raises(svc, tmp_path):
+    from studio.assets import collections
+    with pytest.raises(collections.CollectionError, match="introuvable"):
+        svc.resolve_collection(str(tmp_path / "nexiste-pas.json"))
+
+
+def test_resolve_collection_invalid_json_raises(svc, tmp_path):
+    from studio.assets import collections
+    p = tmp_path / "collection.json"
+    p.write_text("{ pas du json")
+    with pytest.raises(collections.CollectionError, match="JSON invalide"):
+        svc.resolve_collection(str(p))
+
+
+def test_resolve_collection_fetches_url_with_github_token(svc, monkeypatch, tmp_path):
+    """URL http(s) : téléchargée via urllib ; un token GitHub configuré est envoyé en en-tête
+    Authorization (utile si le manifeste est hébergé sur un dépôt/gist privé)."""
+    import io
+
+    from studio.api import server as server_mod
+    from studio.config import Config
+    monkeypatch.setattr(svc, "config", Config(state_dir=tmp_path / "cfg"))
+    svc.config.set_github_token("ghp_secret")
+    seen = {}
+
+    class FakeResp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+    def fake_urlopen(req, timeout=30, context=None):
+        seen["headers"] = dict(req.header_items())
+        return FakeResp(json.dumps(_COL_MANIFEST).encode())
+    monkeypatch.setattr(server_mod.urllib.request, "urlopen", fake_urlopen)
+
+    r = svc.resolve_collection("https://raw.githubusercontent.com/o/r/main/collection.json")
+    assert r["name"] == "FR classique + full-art"
+    assert seen["headers"].get("Authorization") == "Bearer ghp_secret"
+
+
+def test_resolve_collection_http_error_is_readable(svc, monkeypatch, tmp_path):
+    import urllib.error
+
+    from studio.api import server as server_mod
+
+    def fake_urlopen(req, timeout=30, context=None):
+        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+    monkeypatch.setattr(server_mod.urllib.request, "urlopen", fake_urlopen)
+
+    from studio.assets import collections
+    with pytest.raises(collections.CollectionError, match="HTTP 404"):
+        svc.resolve_collection("https://example.com/collection.json")
+
+
+def test_http_collections_resolve(server, tmp_path):
+    p = tmp_path / "collection.json"
+    p.write_text(json.dumps(_COL_MANIFEST))
+    code, r = _post(server, "/api/collections/resolve", {"source": str(p)})
+    assert code == 200
+    assert r["name"] == "FR classique + full-art"
+    assert {pk["label"] for pk in r["packs"]} == {
+        "Cartes FR classiques", "Cartes FR alternatives", "Traduction FR"}
+
+
+def test_http_collections_resolve_error_is_400(server, tmp_path):
+    req = urllib.request.Request(
+        server + "/api/collections/resolve",
+        data=json.dumps({"source": str(tmp_path / "manquant.json")}).encode(),
+        method="POST", headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req)
+        assert False, "aurait dû lever 400"
+    except urllib.error.HTTPError as e:
+        assert e.code == 400
+        assert "introuvable" in json.loads(e.read())["error"]
+
+
 def _wait_job(server, job_id, timeout=5.0):
     """Interroge /api/jobs/<id> jusqu'à ce qu'il ne soit plus 'running' (ou timeout)."""
     import time

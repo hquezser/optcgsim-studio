@@ -15,6 +15,7 @@ Endpoints (préfixe /api) :
     GET  /packs/<name>/coverage     -> couverture par deck (le crochet d'adoption)
     GET  /decks                     -> decks en base
     POST /decks/import {text?|url?, name?, tags?}
+    POST /collections/resolve {source} -> résout un collection.json (P10-c) sans rien importer
 
 Écriture (apply/remove) : passe par AssetManager -> mêmes garde-fous (backup, atomique,
 restore). Le serveur écoute sur 127.0.0.1 uniquement (jamais exposé au réseau).
@@ -25,15 +26,18 @@ from __future__ import annotations
 import json
 import re
 import tempfile
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from ..assets import cardmeta, packlib, sourcefetch
+from ..assets import cardmeta, collections, packlib, sourcefetch
 from ..assets.manager import AssetError, AssetManager
 from ..config import Config
 from ..decks import importer
 from ..gamepaths import GameInstall, locate
+from ..nettls import CERT_FIX_HINT, is_cert_error, ssl_context
 from ..storage.local import DEFAULT_DB, LocalStore
 from .jobs import JobManager, ProgressReporter
 
@@ -336,6 +340,47 @@ class StudioService:
     def start_deckpack_job(self, source: str) -> str:
         return self.jobs.start("deckpack", lambda reporter: self.import_deckpack(source, reporter))
 
+    # ------------------------------------------------------------ P10-c : collections de packs
+    def _fetch_text(self, source: str) -> str:
+        """Récupère le texte d'un manifeste : URL http(s) (avec le token GitHub si l'hôte en
+        a besoin) ou fichier déjà présent sur le disque local (chemin tapé, ou fichier uploadé
+        par l'appelant). Aucun autre protocole/téléchargement (zip, Dropbox…) : un manifeste
+        `collection.json` est un petit fichier JSON, pas un pack — pas besoin de `packlib.ingest`."""
+        src = source.strip()
+        if re.match(r"^https?://", src, re.I):
+            headers = {"User-Agent": "optcgsim-studio/0.1"}
+            token = self.config.github_token()
+            host = urlparse(src).hostname or ""
+            if token and re.search(r"github(usercontent)?\.com$", host):
+                headers["Authorization"] = f"Bearer {token}"
+            req = urllib.request.Request(src, headers=headers)
+            try:
+                with urllib.request.urlopen(req, timeout=30, context=ssl_context()) as resp:
+                    return resp.read().decode("utf-8", errors="replace")
+            except urllib.error.HTTPError as e:
+                raise collections.CollectionError(
+                    f"Impossible de récupérer le manifeste ({src}) : HTTP {e.code}.") from e
+            except urllib.error.URLError as e:
+                if is_cert_error(e):
+                    raise collections.CollectionError(CERT_FIX_HINT) from e
+                raise collections.CollectionError(
+                    f"Hôte injoignable pour {src} : {e.reason}") from e
+        p = Path(src)
+        if not p.is_file():
+            raise collections.CollectionError(
+                f"Source introuvable (ni URL http(s), ni fichier local) : {src}")
+        return p.read_text(errors="replace")
+
+    def resolve_collection(self, source: str) -> dict:
+        """Résout un manifeste `collection.json` (URL ou chemin local) SANS rien importer —
+        réutilise `collections.parse_text` (P10-a) pour la validation/le regroupement
+        variantes/compléments ; ne fait ici que le fetch."""
+        col = collections.parse_text(self._fetch_text(source))
+        return {"name": col.name,
+                "packs": [{"url": p.url, "label": p.label, "variant_group": p.variant_group}
+                         for p in col.packs],
+                "warnings": col.warnings}
+
 
 # --------------------------------------------------------------------------- HTTP
 def make_handler(svc: StudioService):
@@ -435,10 +480,14 @@ def make_handler(svc: StudioService):
                 if path == "/api/deckpacks/add":
                     b = self._body_json()
                     return self._send(202, {"job_id": svc.start_deckpack_job(b["source"])})
+                if path == "/api/collections/resolve":
+                    b = self._body_json()
+                    return self._send(200, svc.resolve_collection(b["source"]))
                 return self._send(404, {"error": "not found"})
             except KeyError as e:
                 return self._send(404, {"error": f"introuvable : {e}"})
-            except (AssetError, importer.ImportError_, packlib.PackError) as e:
+            except (AssetError, importer.ImportError_, packlib.PackError,
+                   collections.CollectionError) as e:
                 return self._send(400, {"error": str(e)})
             except Exception as e:  # noqa: BLE001
                 return self._send(500, {"error": str(e)})

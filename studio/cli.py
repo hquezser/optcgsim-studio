@@ -486,7 +486,11 @@ def cmd_repos_build(args) -> int:
     print("  git remote add origin git@github.com:<toi>/<dépôt-privé>.git && git push -u origin main")
     print(f"\nÀ chaque sortie de set : studio repos update --out {args.out}")
     print(f"Après le push, complète les URLs dans {args.out}/collection.json "
-         "(import groupé — UI pas encore disponible, cf. chantier P10 du plan)")
+         "(l'UI web sait déjà importer ce manifeste groupé — section « Importer une "
+         "collection », cf. chantier P10 du plan). Rappel : deux familles de CARTES qui "
+         "écrasent les MÊMES fichiers cibles (ex. alt-arts anglais ET traduction FR) doivent "
+         "partager le même --collection-group, même avec des --cards-as différents — sinon "
+         "l'UI les propose comme des compléments indépendants qui peuvent se marcher dessus.")
     return 0
 
 
@@ -643,15 +647,20 @@ def build_parser() -> argparse.ArgumentParser:
                          "même alias écraseraient le même TRANSLATION.txt ; --lang fr regroupe "
                          "toutes les variantes d'une langue dans un seul dépôt de traduction.")
     rb.add_argument("--collection-label", default=None,
-                    help="[P10, génération seulement — pas encore d'import via l'UI] libellé "
-                         "affiché pour cette famille dans <out>/collection.json (défaut : le "
-                         "nom de la famille). Persisté : pas besoin de le retaper à chaque "
-                         "`repos update`.")
+                    help="[P10] libellé affiché pour cette famille dans <out>/collection.json "
+                         "(défaut : le nom de la famille), consommé par l'UI web (section "
+                         "« Importer une collection »). Persisté : pas besoin de le retaper à "
+                         "chaque `repos update`.")
     rb.add_argument("--collection-group", default=None,
-                    help="[P10, génération seulement] marque cette famille comme une VARIANTE "
-                         "ALTERNATIVE de ce groupe nommé (ex. --collection-group cards pour "
-                         "classique ET full-art) — un seul pack du groupe devrait être importé, "
-                         "jamais tous. Omis = famille complémentaire (toujours importée).")
+                    help="[P10] marque cette famille comme une VARIANTE ALTERNATIVE de ce "
+                         "groupe nommé (ex. --collection-group cards pour classique ET "
+                         "full-art) — l'UI la propose en radio, un seul pack du groupe importé "
+                         "à la fois, jamais tous. IMPORTANT : à utiliser pour TOUTE famille de "
+                         "CARTES qui écrase les mêmes fichiers cibles qu'une autre, même avec "
+                         "un --cards-as différent (ex. cards-alt anglais vs translated-fr-* — "
+                         "tous les trois réécrivent Cards/<SET>/<ID>.png, donc tous les trois "
+                         "doivent partager --collection-group cards). Omis = famille "
+                         "complémentaire (case cochée par défaut, toujours importée).")
     rb.set_defaults(func=cmd_repos_build)
 
     ru = sr.add_parser("update",

@@ -3,8 +3,9 @@
 P10 est un chantier en plusieurs volets (voir docs/PLAN-import-packs.md, chantier P10) :
   (a) format + parsing            -> CE FICHIER + studio/assets/collections.py (FAIT)
   (b) génération CLI (repobuild)  -> tests dans test_repobuild.py (FAIT)
-  (c) résolution distante + UI    -> PAS COMMENCÉ (POST /api/collections/resolve, index.html)
-  (d) tests de bout en bout (c)   -> PAS COMMENCÉ (dépend de c)
+  (c) résolution distante + UI    -> FAIT (POST /api/collections/resolve, index.html) ; tests
+                                      de la route dans test_api.py (StudioService.resolve_collection)
+  (d) tests de bout en bout (c)   -> tests HTTP + erreurs lisibles dans test_api.py
 """
 
 import pytest

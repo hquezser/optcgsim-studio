@@ -28,13 +28,15 @@ choix, présenté en radio côté UI) ; une entrée SANS `variant_group` est COM
 
 Ce module ne fait QUE parser/valider un manifeste déjà obtenu (dict local, ou une chaîne
 JSON) — il ne télécharge rien lui-même (contrairement à `repobuild`/`sourcefetch`) et ne parle
-pas au réseau. La RÉSOLUTION distante (fetch d'une URL de manifeste, cf. plan P10-c,
-`POST /api/collections/resolve`, PAS ENCORE IMPLÉMENTÉE) est un TODO côté API ; ce module sert
-de base commune au CLI (génération) et à la future route API (consommation).
+pas au réseau. La RÉSOLUTION distante (fetch d'une URL de manifeste) est faite côté API
+(`StudioService._fetch_text`/`resolve_collection`, `POST /api/collections/resolve`,
+`studio/api/server.py`, P10-c) ; ce module sert de base commune au CLI (génération) et à
+cette route (consommation).
 
-Import réel d'une collection choisie (PAS ENCORE IMPLÉMENTÉ, cf. plan P10-c) : réutilise
-`packlib.add_pack` PACK PAR PACK (une invocation par entrée sélectionnée) — aucune nouvelle
-route d'ajout n'est nécessaire, ce module ne fait qu'aider à PRÉSENTER le choix (radio/checkbox).
+Import réel d'une collection choisie (UI, P10-c, `studio/api/static/index.html`) : réutilise
+`POST /api/packs/add` PACK PAR PACK (une requête par entrée sélectionnée, séquentielle) —
+aucune nouvelle route d'ajout n'a été nécessaire, ce module ne fait qu'aider à PRÉSENTER le
+choix (radio/checkbox).
 """
 from __future__ import annotations
 

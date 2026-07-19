@@ -148,6 +148,20 @@
   </div>
 
   <section>
+    <h2>Importer une collection</h2>
+    <p class="sub">Un <code>collection.json</code> regroupe plusieurs dépôts liés (générés
+      côté mainteneur via <code>studio repos build --collection-label/--collection-group</code>)
+      pour un seul « look » cohérent — colle l'URL du manifeste (ou son chemin local), puis
+      choisis les variantes (un seul choix par groupe) et les compléments (tous cochés par
+      défaut) avant d'importer.</p>
+    <div class="row">
+      <input id="collection-src" placeholder="URL du collection.json, ou /chemin local" style="flex:1">
+      <button id="collection-analyse-btn" onclick="analyseCollection()">Analyser</button>
+    </div>
+    <div id="collection-result"></div>
+  </section>
+
+  <section>
     <h2>Bibliothèque de packs</h2>
     <p class="sub">Applique un pack (réversible à tout instant), ou vois combien de cartes de
       <b>tes decks</b> il habille.</p>
@@ -343,6 +357,82 @@ async function addSource(){
     loadPacks();
   }catch(e){ toast(e.message,1); }
   finally{ btn.disabled = false; }
+}
+
+// ------------------------------------------------------------------ P10-c : collections
+let _collection = null;   // dernière collection résolue (packs indexés par url pour l'import)
+
+async function analyseCollection(){
+  const source = $('#collection-src').value.trim();
+  if(!source) return toast('Indique une URL ou un chemin de collection.json', 1);
+  const btn = $('#collection-analyse-btn'); btn.disabled = true;
+  try{
+    _collection = await api('/collections/resolve', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({source})});
+    renderCollection(_collection);
+  }catch(e){ toast(e.message, 1); $('#collection-result').innerHTML=''; }
+  finally{ btn.disabled = false; }
+}
+
+function renderCollection(col){
+  const groups = {}, standalone = [];
+  for(const p of col.packs){
+    if(p.variant_group) (groups[p.variant_group] = groups[p.variant_group] || []).push(p);
+    else standalone.push(p);
+  }
+  let html = `<div class="pack">
+    <div class="top"><span class="name">${col.name}</span>
+      <span class="tag">${col.packs.length} pack(s)</span></div>`;
+  if(col.warnings && col.warnings.length)
+    html += col.warnings.map(w => `<div class="hint">⚠ ${w}</div>`).join('');
+  for(const [group, packs] of Object.entries(groups)){
+    html += `<div class="meta" style="margin:10px 0 4px"><b>${group}</b> — un seul choix</div>`;
+    html += packs.map((p, i) => `
+      <label style="display:flex;align-items:center;gap:6px;margin:3px 0">
+        <input type="radio" name="col-group-${group}" value="${p.url}"
+               ${i === 0 ? 'checked' : ''} style="width:auto"> ${p.label}
+      </label>`).join('');
+  }
+  if(standalone.length){
+    html += `<div class="meta" style="margin:10px 0 4px"><b>Compléments</b></div>`;
+    html += standalone.map(p => `
+      <label style="display:flex;align-items:center;gap:6px;margin:3px 0">
+        <input type="checkbox" class="col-standalone" value="${p.url}" checked
+               style="width:auto"> ${p.label}
+      </label>`).join('');
+  }
+  html += `<div class="actions" style="margin-top:12px">
+      <button onclick="importCollection()">Importer la sélection</button>
+    </div>
+    <div class="hint" id="collection-progress"></div>
+  </div>`;
+  $('#collection-result').innerHTML = html;
+}
+
+async function importCollection(){
+  if(!_collection) return;
+  const el = $('#collection-result');
+  const selected = [
+    ...el.querySelectorAll('input[type=radio]:checked'),
+    ...el.querySelectorAll('input.col-standalone:checked'),
+  ].map(i => i.value);
+  if(!selected.length) return toast('Rien de sélectionné', 1);
+  const byUrl = {}; for(const p of _collection.packs) byUrl[p.url] = p;
+  const progress = $('#collection-progress');
+  let ok = 0;
+  for(let i = 0; i < selected.length; i++){
+    const p = byUrl[selected[i]];
+    progress.textContent = `pack ${i + 1}/${selected.length} : ${p.label}…`;
+    try{
+      const r = await api('/packs/add', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({source: p.url, name: p.label})});
+      await pollJob(r.job_id, `Import « ${p.label} »`);
+      ok++;
+    }catch(e){ toast(`« ${p.label} » : ${e.message}`, 1); }
+  }
+  progress.textContent = '';
+  toast(`Collection « ${_collection.name} » : ${ok}/${selected.length} pack(s) importé(s).`);
+  loadPacks();
 }
 
 async function saveToken(){
