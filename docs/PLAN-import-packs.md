@@ -374,6 +374,32 @@ initiale (j'avais bundlé DON avec les vrais dos de carte dans une même famille
 - Tests : `route("don", …)` -> famille cartes ; build de bout en bout vérifie l'absence de
   `cardbacks-don/` et la présence de `cards-alt/Don/…`. 160 verts.
 
+### (f) Fix — rebuild sur un vieux MANIFEST (2026-07-19)
+
+Un `MANIFEST.json` généré AVANT (d) avait `"files"` = ENTIER (le compte) ; le nouveau code de
+diff s'attend à une map chemin->sha1 et plantait (`TypeError: 'int' object is not iterable`)
+en relançant `repos build` sur un `--out` déjà construit avec l'ancien format. Fixé : un
+`"files"` non-dict est ignoré (diff reparti à vide, tout en « ajouté »), et réécrit au nouveau
+schéma. +1 test de régression. 161 verts.
+
+### (g) `--path-prefix` — variantes multiples dans une même source (2026-07-19)
+
+Retour d'usage : une source (repo GitHub FR) peut mélanger « traductions, cartes classiques
+et cartes alternatives ». Or `_canonical_card_name` retire les suffixes parasites (`_alt`,
+`_OVERRIDE`…) pour produire UN nom canonique par id — deux variantes du même id traitées dans
+le MÊME `build()` se disputent donc la même cible (collision, dernière source gagnante,
+perte silencieuse si le rapport n'est pas lu).
+
+- `build(..., path_prefix=...)` : ne traite que les fichiers sous ce sous-dossier de la
+  source ; les autres sont comptés (`RepoBuildReport.excluded_by_prefix`), jamais silencieux.
+- CLI `--path-prefix FR_classique`. Un `build()` par variante (préfixe + `cards_as` distincts,
+  ex. `translated` / `translated-alt`) préserve les deux au lieu d'en perdre une.
+- Journal `.repos-build.json` : `path_prefix` fait partie de la clé de dédup (deux préfixes
+  sous le même `cards_as` restent deux entrées séparées, toutes deux rejouées par `update()`).
+  Rétrocompatible : une entrée sans `path_prefix` se relit comme `None`.
+- Tests : collision démontrée sans préfixe, séparation propre avec préfixes, journal + replay
+  par `update()` des deux configurations. 164 verts.
+
 ## Chantier P9 — Publier le format « pack de decks » (contribution communautaire)
 
 Objectif : permettre à la communauté de créer et partager des packs de decks (le format

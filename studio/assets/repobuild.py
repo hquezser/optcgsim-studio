@@ -81,6 +81,7 @@ class RepoBuildReport:
     sources: list = field(default_factory=list)
     unclassified: list = field(default_factory=list)  # {source, path}
     collisions: list = field(default_factory=list)    # {repo, rel}
+    excluded_by_prefix: int = 0   # fichiers hors `path_prefix`, ignorés délibérément
 
     def summary(self) -> str:
         parts = [f"{s.files} fichiers/{s.bytes // (1024*1024)} Mo « {fam} »"
@@ -90,6 +91,8 @@ class RepoBuildReport:
             s += f" ; {len(self.unclassified)} non classé(s)"
         if self.collisions:
             s += f" ; {len(self.collisions)} collision(s)"
+        if self.excluded_by_prefix:
+            s += f" ; {self.excluded_by_prefix} hors périmètre (--path-prefix)"
         return s
 
 
@@ -154,9 +157,17 @@ def _iter_files(root: Path):
 
 def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
           split_cards_by_type: bool = True, git_init: bool = True,
-          work_dir: Path | None = None, ingest=packlib.ingest,
+          path_prefix: str | None = None, work_dir: Path | None = None, ingest=packlib.ingest,
           on_progress: packlib.OnProgress = packlib._noop_progress) -> RepoBuildReport:
     """Ingère chaque source, route chaque fichier vers son dépôt de famille, écrit les dépôts.
+
+    `path_prefix` scope l'ingestion à un SOUS-DOSSIER de la source (ex. "FR_classique") —
+    utile quand une même source mélange plusieurs VARIANTES de la même carte (classique ET
+    alternative, par exemple) : le nom canonique retire les suffixes parasites (`_alt`,
+    `_OVERRIDE`…) pour produire UN fichier par id, donc deux variantes traitées dans le MÊME
+    appel entreraient en collision (dernière gagnante). Lancer un `build()` par variante, avec
+    un `cards_as` distinct (ex. "translated" puis "translated-alt") et un `path_prefix` qui
+    scope chacun à son sous-dossier, les préserve toutes les deux — chacune dans sa famille.
 
     Ré-exécutable sans risque sur un `out_dir` déjà construit (les fichiers déjà présents sont
     remplacés, pas signalés en collision — une « collision » ne désigne QUE deux sources de CE
@@ -167,15 +178,20 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
     work_dir = Path(work_dir or (out_dir / ".work"))
     rep = RepoBuildReport(out_dir=out_dir, sources=list(sources))
     written: dict[str, dict[str, str]] = {}   # family -> {rel: sha1}, CE run uniquement
+    prefix = path_prefix.strip("/\\").replace("\\", "/") if path_prefix else None
 
     for si, src in enumerate(sources):
         root = ingest(src, work_dir / f"src{si}", on_progress=on_progress)
         for f in _iter_files(root):
             rel = f.relative_to(root)
-            cat, cid = packlib.classify_rel(str(rel))
+            rel_str = str(rel).replace("\\", "/")
+            if prefix and not (rel_str == prefix or rel_str.startswith(prefix + "/")):
+                rep.excluded_by_prefix += 1
+                continue
+            cat, cid = packlib.classify_rel(rel_str)
             fam, target_rel = route(cat, cid, f.name, cards_as, split_cards_by_type)
             if fam is None:
-                rep.unclassified.append({"source": src, "path": str(rel)})
+                rep.unclassified.append({"source": src, "path": rel_str})
                 continue
             fam_written = written.setdefault(fam, {})
             if target_rel in fam_written:
@@ -192,7 +208,7 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
         stat.by_type = _by_type_from_written(files)
         _finalize_repo(out_dir / fam, stat, rep.sources, git_init, files)
 
-    _record_build(out_dir, sources, cards_as, split_cards_by_type)
+    _record_build(out_dir, sources, cards_as, split_cards_by_type, path_prefix)
     return rep
 
 
@@ -208,6 +224,7 @@ def update(out_dir: Path, *, work_dir: Path | None = None, ingest=packlib.ingest
             "`studio repos build <sources…> --out ...` au moins une fois.")
     return [build(e["sources"], out_dir, cards_as=e["cards_as"],
                  split_cards_by_type=e["split_cards_by_type"],
+                 path_prefix=e.get("path_prefix"),   # absent dans les vieux journaux -> None
                  work_dir=work_dir, ingest=ingest, on_progress=on_progress)
            for e in entries]
 
@@ -220,14 +237,17 @@ def load_build_log(out_dir: Path) -> list[dict]:
 
 
 def _record_build(out_dir: Path, sources: list[str], cards_as: str,
-                  split_cards_by_type: bool) -> None:
+                  split_cards_by_type: bool, path_prefix: str | None) -> None:
     path = Path(out_dir) / _LOG_NAME
     entries = json.loads(path.read_text()) if path.exists() else []
+    # dédup par (cards_as, split, path_prefix) : deux prefixes distincts sous le même cards_as
+    # (rare, mais possible) restent deux entrées distinctes, chacune rejouable par `update()`.
     entries = [e for e in entries
               if not (e["cards_as"] == cards_as
-                      and e["split_cards_by_type"] == split_cards_by_type)]
+                      and e["split_cards_by_type"] == split_cards_by_type
+                      and e.get("path_prefix") == path_prefix)]
     entries.append({"sources": list(sources), "cards_as": cards_as,
-                    "split_cards_by_type": split_cards_by_type})
+                    "split_cards_by_type": split_cards_by_type, "path_prefix": path_prefix})
     path.write_text(json.dumps(entries, indent=2, ensure_ascii=False))
 
 

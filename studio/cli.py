@@ -476,7 +476,7 @@ def cmd_repos_build(args) -> int:
     rep = repobuild.build(
         args.source, Path(args.out), cards_as=args.cards_as,
         split_cards_by_type=not args.no_split, git_init=not args.no_git,
-        on_progress=_console_progress)
+        path_prefix=args.path_prefix, on_progress=_console_progress)
     _print_repo_report(rep, repobuild)
     print(f"\nDépôts prêts dans {args.out}. Prochaine étape (à faire par toi) :")
     print("  cd <dépôt> && git add -A && git commit -m init")
@@ -622,6 +622,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="ne pas sous-classer les cartes par type (Leaders/Events/…)")
     rb.add_argument("--no-git", action="store_true",
                     help="ne pas exécuter git init dans chaque dépôt")
+    rb.add_argument("--path-prefix", default=None,
+                    help="ne traiter que ce sous-dossier de la source (ex. FR_classique) — "
+                         "utile quand une même source mélange plusieurs variantes de la "
+                         "même carte (classique/alternative) : un build par variante avec "
+                         "un --cards-as et un --path-prefix distincts évite la collision")
     rb.set_defaults(func=cmd_repos_build)
 
     ru = sr.add_parser("update",

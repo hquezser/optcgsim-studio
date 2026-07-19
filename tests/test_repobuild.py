@@ -188,7 +188,8 @@ def test_build_records_log_for_update(tmp_path):
     repobuild.build(["s"], out, cards_as="alt", split_cards_by_type=True,
                     ingest=lambda s, wd, on_progress=None: src, git_init=False)
     log = repobuild.load_build_log(out)
-    assert log == [{"sources": ["s"], "cards_as": "alt", "split_cards_by_type": True}]
+    assert log == [{"sources": ["s"], "cards_as": "alt", "split_cards_by_type": True,
+                    "path_prefix": None}]
     # (out / ".repos-build.json") reste HORS des dépôts de famille -> jamais poussé avec eux
     assert not (out / "cards-alt" / ".repos-build.json").exists()
 
@@ -201,6 +202,69 @@ def test_build_log_dedupes_by_config_not_by_sources(tmp_path):
     repobuild.build(["s", "s2"], out, cards_as="alt", ingest=ingest, git_init=False)
     log = repobuild.load_build_log(out)
     assert len(log) == 1 and log[0]["sources"] == ["s", "s2"]   # la 2e config remplace la 1re
+
+
+# ------------------------------------------------------------------ P8+ : --path-prefix (variantes)
+def _fr_mixed_source(root: Path) -> Path:
+    """Une seule source qui mélange DEUX variantes du même id (classique/alternative) — le
+    cas réel signalé : un repo FR github avec traductions + cartes classiques + alternatives."""
+    make_png(root / "FR_classique" / "OP01" / "OP01-001_OVERRIDE.png")
+    make_png(root / "FR_alt" / "OP01" / "OP01-001_alt.png")
+    (root / "TRANSLATION.txt").write_text("Key=Val\n")
+    return root
+
+
+def test_mixed_variants_in_one_build_collide(tmp_path):
+    """Sans path_prefix, classique et alternative du MÊME id se disputent le même nom
+    canonique dans le même run -> collision (dernière source gagne), PERTE silencieuse
+    d'une des deux variantes si on ne s'en aperçoit pas."""
+    src = _fr_mixed_source(tmp_path / "src")
+    out = tmp_path / "out"
+    rep = repobuild.build(["fr"], out, cards_as="translated",
+                          ingest=lambda s, wd, on_progress=None: src, git_init=False)
+    assert rep.collisions and rep.collisions[0]["repo"] == "translations"
+
+
+def test_path_prefix_splits_variants_into_separate_families(tmp_path):
+    """Deux build() scopés chacun à son sous-dossier, avec un cards_as distinct par variante
+    -> les deux images du MÊME id coexistent, chacune dans sa famille."""
+    src = _fr_mixed_source(tmp_path / "src")
+    out = tmp_path / "out"
+    ingest = lambda s, wd, on_progress=None: src
+    rep_classic = repobuild.build(["fr"], out, cards_as="translated",
+                                  path_prefix="FR_classique", ingest=ingest, git_init=False)
+    rep_alt = repobuild.build(["fr"], out, cards_as="translated-alt",
+                              path_prefix="FR_alt", ingest=ingest, git_init=False)
+
+    assert rep_classic.collisions == [] and rep_alt.collisions == []
+    assert (out / "translations" / "Leaders" / "Cards" / "OP01" / "OP01-001.png").is_file()
+    assert (out / "translated-alt" / "Leaders" / "Cards" / "OP01" / "OP01-001.png").is_file()
+    # chaque build ignore délibérément les fichiers hors de son préfixe
+    assert rep_classic.excluded_by_prefix >= 1   # FR_alt/... et TRANSLATION.txt exclus
+    assert rep_alt.excluded_by_prefix >= 1        # FR_classique/... et TRANSLATION.txt exclus
+
+
+def test_path_prefix_recorded_and_replayed_by_update(tmp_path):
+    src = _fr_mixed_source(tmp_path / "src")
+    out = tmp_path / "out"
+    calls = []
+
+    def fake_ingest(source, wd, on_progress=None):
+        calls.append(source)
+        return src
+
+    repobuild.build(["fr"], out, cards_as="translated", path_prefix="FR_classique",
+                    ingest=fake_ingest, git_init=False)
+    repobuild.build(["fr"], out, cards_as="translated-alt", path_prefix="FR_alt",
+                    ingest=fake_ingest, git_init=False)
+    log = repobuild.load_build_log(out)
+    assert {e["path_prefix"] for e in log} == {"FR_classique", "FR_alt"}
+
+    calls.clear()
+    reports = repobuild.update(out, ingest=fake_ingest)
+    assert len(reports) == 2 and calls == ["fr", "fr"]
+    fams = {fam for r in reports for fam in r.repos}
+    assert fams == {"translations", "translated-alt"}
 
 
 def test_update_replays_recorded_sources_without_reasking(tmp_path):

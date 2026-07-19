@@ -211,6 +211,24 @@ Chaque fichier est classé (via `classify_rel` + `cardmeta`) et routé :
 - `CardBacks/` (vrais dos de carte uniquement) → `cardbacks/`, `Playmats/` + fonds →
   `playmats/`, `TRANSLATION.txt` → `translations/`.
 
+**Une source qui mélange plusieurs variantes de la même carte** (ex. un repo de traduction
+qui contient à la fois des cartes « classiques » et des cartes « alternatives » traduites) :
+le nom canonique retire les suffixes parasites (`_alt`, `_OVERRIDE`…) pour produire UN fichier
+par id — deux variantes traitées dans le MÊME `build()` entrent donc en collision (rapportée,
+dernière gagnante, perte silencieuse si on ne regarde pas le rapport). Scinder avec
+`--path-prefix` : un `build()` par variante, chacun scopé à son sous-dossier et avec un
+`--cards-as` distinct, préserve les deux :
+
+```bash
+studio repos build <lien-fr> --out ~/optcgsim-repos --cards-as translated     --path-prefix FR_classique
+studio repos build <lien-fr> --out ~/optcgsim-repos --cards-as translated-alt --path-prefix FR_alt
+```
+
+(adapter `FR_classique`/`FR_alt` aux vrais noms de dossiers de la source — `studio repos
+build` sans `--path-prefix` d'abord, en lisant les non-classés/collisions du rapport, aide à
+les repérer). Chaque configuration est mémorisée séparément : `studio repos update --out …`
+rejoue les deux.
+
 Sources : **GitHub** (dépôt/zip) et **Dropbox** (dossier partagé → zip) sont téléchargés
 entiers ; **Google Drive** est géré pour les **fichiers/zip partagés** (« tout le monde avec
 le lien ») — un *dossier* Drive n'a pas d'export zip public, partage-le en `.zip`. Chaque
