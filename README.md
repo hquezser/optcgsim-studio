@@ -186,7 +186,11 @@ Conseil d'organisation des dépôts (P8) : les images étant volumineuses, hébe
 qu'un seul — on reste sous les limites GitHub (repos < ~1 Go) et chaque famille se met à
 jour indépendamment. Le studio gère autant de sources suivies que voulu.
 
-### Construire ces dépôts depuis tes liens (`studio repos build`)
+### Construire ces dépôts depuis tes liens (`studio repos build`) — commande MAINTENEUR
+
+> **Hors surface end-user.** Cette commande n'est **pas** dans l'UI web (qui, elle, est
+> destinée à tous les utilisateurs : importer/appliquer/restaurer). `repos build` est un
+> outil du **créateur/mainteneur** qui produit les dépôts d'images privés — CLI uniquement.
 
 Plutôt que d'organiser les dépôts à la main, on part des liens **déjà partagés** (GitHub,
 Dropbox, Google Drive) et le studio **génère l'arborescence par famille**, prête à pousser :
