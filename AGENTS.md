@@ -1,0 +1,72 @@
+# optcgsim-studio — Guide de développement
+
+## Écosystème OPTCGSim — tu es ici
+
+5 projets frères, finalités disjointes :
+
+| Repo | Rôle | Statut |
+|---|---|---|
+| `optcgsim-haki` | Brouillon/incubateur (pas de vocation à être publié) + son propre tracker de stats post-match. | local, aucun remote |
+| `optcgsim-haki-public` | Assistant de décision **en cours de match** (overlay, lethal/mulligan). Lecture de logs uniquement. | publié : github.com/hquezser/optcgsim-haki |
+| **`optcgsim-studio`** ← ici | Plateforme QoL : hot-swap cosmétique, import universel de decklists, sync multi-appareils. | local, prêt à publier |
+| `optcgsim-rogue-lab` | Analytique post-match causale, decks Rogue/non-méta. | local |
+| `optcgsim-deckpacks` | Format communautaire `deckpack.json`, consommé par ce studio. | local, pas encore poussé |
+
+**Périmètre de CE repo** : modifie des fichiers du sim — **cosmétiques uniquement**
+(images/traductions/tapis), toujours réversible (`assets restore-all`), jamais le moteur de
+jeu. Zéro dépendance externe (stdlib only, même pour le serveur HTTP de l'UI).
+
+**Mémoire de session** : `~/.claude/projects/-Users-hugoq-playground-optcgsim-studio/memory/MEMORY.md`.
+
+**Plan détaillé** : `docs/PLAN-import-packs.md` (import de packs, P0→P10 — historique complet des
+décisions et incidents réels résolus ; à consulter avant de re-décider quoi que ce soit sur ce
+sujet).
+
+## Build & Test
+
+```bash
+python3 -m pytest -q          # suite complète (stdlib + pytest, aucune autre dépendance)
+pip install -e .               # installer en dev (editable) — expose la commande `studio`
+studio ui                      # lance l'UI locale (http://127.0.0.1:8770)
+```
+
+Convention stricte : zéro dépendance externe en dehors de `pytest` (dev only). Ne pas
+introduire de paquet tiers dans `studio/` sans en discuter — c'est un choix délibéré (l'UI
+tourne sur `http.server` de la stdlib, pas de Node/npm/build).
+
+## Architecture
+
+- `studio/` — package Python
+  - `cli.py` — entry point `studio` (assets/packs/decks/repos/ui/sync/config)
+  - `assets/` — **pilier 1** : cosmétiques
+    - `manager.py` — hot-swap sûr (whitelist, magic-bytes, backup pristine, restore)
+    - `packlib.py` — normalisation multi-sources (Themer/Dropbox/GitHub/Drive) en pack canonique
+    - `repobuild.py` — **P8+** : construit des dépôts d'images par famille depuis des sources
+      hétérogènes (`repos build`/`repos update`), CLI-only (outil mainteneur, jamais dans l'UI —
+      voir mémoire `studio-ui-vs-maintainer-boundary`)
+    - `collections.py` — **P10** : format `collection.json` (variantes/compléments) pour
+      importer plusieurs dépôts liés en un geste via l'UI
+    - `sourcefetch.py` — fetch sélectif GitHub (Tree API + CDN raw.githubusercontent.com)
+    - `cardmeta.py` — table id→type de carte (Leader/Character/Event/Stage), vendorisée
+  - `decks/` — **pilier 2** : import universel de decklists (`importer.py`, `deckpack.py`)
+  - `storage/` — **pilier 3** : sync offline-first (`local.py` SQLite, `remote.py`, `sync.py`)
+  - `api/` — serveur JSON + UI web (`server.py`, `static/index.html`, `jobs.py` pour les
+    opérations longues en tâche de fond)
+  - `config.py` — secrets locaux (token GitHub), jamais renvoyés en clair par l'API
+  - `nettls.py` — contournement cert SSL macOS (python.org sans root certs)
+- `docs/PLAN-import-packs.md` — plan détaillé du chantier « import de packs » (P0→P10)
+- `frontend/` — structure portable pour un futur client Tauri/React Native (voir son README)
+- `tests/` — pytest, zéro accès réseau réel (tout mocké), zéro écriture dans
+  `~/.optcgsim-studio` réel (state_dir paramétrable, toujours `tmp_path` en test)
+
+## Garde-fous (ne jamais contourner)
+
+- Écriture dans le jeu : uniquement via `AssetManager._swap` (whitelist stricte, magic-bytes +
+  dimensions, atomique, backup pristine + manifeste, `restore-all` intégral).
+- Aucune élévation de privilèges : si un dossier n'est pas écrivable, on l'explique, jamais de
+  `sudo`.
+- `repos build`/`repos update` restent **CLI-only** : produire un dépôt d'images est un geste
+  de mainteneur, pas une action end-user — ne pas les exposer dans l'UI web sans qu'on te le
+  redemande explicitement.
+- Tests : jamais de mutation du vrai `~/.optcgsim-studio/` ou de la vraie installation du jeu —
+  toujours via `state_dir`/`GameInstall` paramétrés sur `tmp_path`.

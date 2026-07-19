@@ -20,13 +20,26 @@ L'UI parle à une **API JSON** (`studio/api/server.py`) qui est le même contrat
 un futur client Next.js/Tauri (mobile) — la logique reste côté Python (voir
 `frontend/README.md` pour la structure portable).
 
-> **Positionnement dans l'écosystème.** Trois projets frères, finalités disjointes :
-> [optcgsim-haki](https://github.com/hquezser/optcgsim-haki) = décision *in-match* (overlay,
-> lecture de logs, **aucune modification du jeu** — promesse de son README, intacte) ;
-> `optcgsim-rogue-lab` = analytique *post-match* ; `optcgsim-studio` = expérience de jeu.
-> Le studio, lui, modifie des fichiers du sim — **cosmétiques uniquement**, en local, opt-in,
-> avec restauration intégrale. Cette séparation de repos est délibérée : chaque outil tient
-> sa promesse propre.
+## Écosystème OPTCGSim
+
+5 projets frères, finalités disjointes (chaque repo tient sa propre promesse) :
+
+| Repo | Rôle | Statut |
+|---|---|---|
+| `optcgsim-haki` | Brouillon/incubateur : point de départ de réflexion pour les 4 projets ci-dessous (`plans/`) + son propre tracker de stats post-match. **Pas de vocation à être publié.** | local, aucun remote |
+| `optcgsim-haki-public` | Assistant de décision **en cours de match** (overlay HUD, lethal/mulligan). Lecture de logs uniquement — **aucune modification du jeu**. | publié : github.com/hquezser/optcgsim-haki |
+| **`optcgsim-studio`** ← ici | Plateforme QoL : hot-swap cosmétique, import universel de decklists, sync multi-appareils. | local, prêt à publier |
+| `optcgsim-rogue-lab` | Analytique **post-match causale** (biais de survie neutralisé) pour decks Rogue/non-méta. | local |
+| `optcgsim-deckpacks` | Format communautaire `deckpack.json`, consommé par ce studio (`decks import-pack`). | local, pas encore poussé |
+
+Le studio, lui, modifie des fichiers du sim — **cosmétiques uniquement**, en local, opt-in,
+avec restauration intégrale (`assets restore-all`). Aucune interception réseau, aucune
+modification du moteur de jeu.
+
+**Mémoire de session (Claude Code)** : si tu ouvres une session ici, son auto-mémoire vit sous
+`~/.claude/projects/-Users-hugoq-playground-optcgsim-studio/memory/MEMORY.md` — pas sous
+optcgsim-haki (une session antérieure démarrée dans optcgsim-haki mais travaillant en réalité
+sur ce repo y avait accumulé de la mémoire par erreur ; déplacée le 2026-07-19).
 
 ## Structure des dossiers
 
