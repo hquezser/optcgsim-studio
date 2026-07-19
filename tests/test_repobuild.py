@@ -488,12 +488,125 @@ def test_build_without_path_prefix_never_calls_selective_fetch(tmp_path, monkeyp
 
 
 # ------------------------------------------------------------------ P8+ : corruption réseau (retry)
+def _make_zip_with_corrupt_member(path: Path, good_name: str, good_content: bytes,
+                                  bad_name: str, bad_content: bytes) -> None:
+    """Construit un zip STORED (non compressé) avec un membre au CRC volontairement invalide —
+    reproduit précisément l'incident réel (central directory valide, données d'UN membre
+    corrompues en transit) sans dépendre du réseau. On flippe un octet dans la zone de
+    données du membre visé (après son en-tête local), en laissant le CRC déclaré (header
+    local + central directory) intact -> mismatch CRC garanti à la lecture."""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as zf:
+        zf.writestr(good_name, good_content)
+        zf.writestr(bad_name, bad_content)
+    with zipfile.ZipFile(path) as zf:
+        info = zf.getinfo(bad_name)
+    data = bytearray(path.read_bytes())
+    namelen, extralen = struct.unpack("<HH", data[info.header_offset + 26:info.header_offset + 30])
+    data_start = info.header_offset + 30 + namelen + extralen
+    data[data_start] ^= 0xFF
+    path.write_bytes(bytes(data))
+
+
+def test_safe_extract_tolerates_one_bad_member_and_reports_it(tmp_path):
+    zpath = tmp_path / "a.zip"
+    _make_zip_with_corrupt_member(zpath, "Cards/OP01/OP01-001.png", b"GOODBYTES",
+                                  "Cards/OP01/OP01-002.png", b"BADBYTESXX")
+    out = tmp_path / "out"
+    with zipfile.ZipFile(zpath) as zf:
+        corrupted = packlib._safe_extract(zf, out)
+    # le membre en défaut est signalé, PAS une exception qui interromprait tout —
+    # et le membre SAIN, lui, s'est bien extrait.
+    assert corrupted == ["Cards/OP01/OP01-002.png"]
+    assert (out / "Cards" / "OP01" / "OP01-001.png").read_bytes() == b"GOODBYTES"
+
+
+def test_repair_corrupted_patches_via_sourcefetch(tmp_path, monkeypatch):
+    from studio.assets import sourcefetch
+    patched = {}
+
+    def fake_fetch(url, paths, dest, token=None, on_progress=None):
+        patched["paths"] = paths
+        for p in paths:
+            (Path(dest) / p).parent.mkdir(parents=True, exist_ok=True)
+            (Path(dest) / p).write_bytes(b"PATCHED")
+        return Path(dest)
+
+    monkeypatch.setattr(sourcefetch, "fetch_selected", fake_fetch)
+    out = tmp_path / "out"
+    out.mkdir()
+    ok = packlib._repair_corrupted(out, ["Cards/OP01/OP01-002.png"],
+                                   "https://github.com/o/r", None, packlib._noop_progress)
+    assert ok is True
+    assert patched["paths"] == ["Cards/OP01/OP01-002.png"]
+    assert (out / "Cards" / "OP01" / "OP01-002.png").read_bytes() == b"PATCHED"
+
+
+def test_repair_corrupted_returns_false_when_not_explorable(tmp_path):
+    # Dropbox (et tout ce qui n'est pas github.com) -> fetch_selected lève FetchError direct.
+    ok = packlib._repair_corrupted(tmp_path, ["x.png"], "https://dropbox.com/x", None,
+                                   packlib._noop_progress)
+    assert ok is False
+
+
+def test_ingest_patches_corrupted_member_instead_of_redownloading_everything(tmp_path, monkeypatch):
+    """LE test de la demande utilisateur : sur une source GitHub, un membre en CRC invalide
+    déclenche un patch CIBLÉ (re-fetch de CE seul fichier) — le zip de plusieurs Go n'est PAS
+    retéléchargé en entier une seconde fois."""
+    from studio.assets import sourcefetch
+    downloads = []
+
+    def fake_download(url, dest_zip, timeout=60.0, on_progress=packlib._noop_progress):
+        downloads.append(url)
+        _make_zip_with_corrupt_member(dest_zip, "Cards/OP01/OP01-001.png", b"GOODBYTES",
+                                      "Cards/OP01/OP01-002.png", b"BADBYTESXX")
+
+    patched = {}
+
+    def fake_fetch(url, paths, dest, token=None, on_progress=None):
+        patched["paths"] = paths
+        for p in paths:
+            (Path(dest) / p).parent.mkdir(parents=True, exist_ok=True)
+            (Path(dest) / p).write_bytes(b"REPAIRED!!")
+        return Path(dest)
+
+    monkeypatch.setattr(packlib, "_download", fake_download)
+    monkeypatch.setattr(packlib, "_resolve_url", lambda u: u)
+    monkeypatch.setattr(sourcefetch, "fetch_selected", fake_fetch)
+
+    out = packlib.ingest("https://github.com/Sparklight-TL/OPTCGSim_FR", tmp_path / "w")
+
+    assert len(downloads) == 1   # UN seul téléchargement complet, jamais retenté
+    assert patched["paths"] == ["Cards/OP01/OP01-002.png"]   # QUE le membre en défaut
+    assert (out / "Cards" / "OP01" / "OP01-001.png").read_bytes() == b"GOODBYTES"     # intact
+    assert (out / "Cards" / "OP01" / "OP01-002.png").read_bytes() == b"REPAIRED!!"    # patché
+
+
+def test_ingest_falls_back_to_redownload_when_repair_not_possible(tmp_path, monkeypatch):
+    """Source non explorable (ex. Dropbox) : le patch ciblé est impossible -> repli normal
+    sur un nouveau téléchargement complet (comportement inchangé)."""
+    downloads = []
+
+    def fake_download(url, dest_zip, timeout=60.0, on_progress=packlib._noop_progress):
+        downloads.append(url)
+        if len(downloads) < 2:
+            _make_zip_with_corrupt_member(dest_zip, "Cards/OP01/OP01-001.png", b"GOODBYTES",
+                                          "Cards/OP01/OP01-002.png", b"BADBYTESXX")
+        else:
+            with zipfile.ZipFile(dest_zip, "w") as zf:
+                zf.writestr("Cards/OP01/OP01-001.png", b"GOODBYTES")
+                zf.writestr("Cards/OP01/OP01-002.png", b"FIXED-ON-RETRY")
+
+    monkeypatch.setattr(packlib, "_download", fake_download)
+    monkeypatch.setattr(packlib, "_resolve_url", lambda u: u)
+    monkeypatch.setattr(packlib.time, "sleep", lambda s: None)
+    out = packlib.ingest("https://dropbox.com/s/x/pack.zip", tmp_path / "w")
+    assert len(downloads) == 2   # patch impossible (pas GitHub) -> retéléchargement complet
+    assert (out / "Cards" / "OP01" / "OP01-002.png").read_bytes() == b"FIXED-ON-RETRY"
+
+
 # Un zip structurellement invalide ne lève PAS BadZipFile (`zipfile.is_zipfile` renvoie
-# juste False, sans exception) : la vraie panne réelle ("Bad CRC-32" au milieu de
-# l'extraction) survient sur un zip dont le CENTRAL DIRECTORY est valide mais dont les
-# données d'UN membre sont corrompues — trop fin à reproduire byte à byte ici. On mocke donc
-# `_materialize` (le point qui lève réellement `zipfile.BadZipFile` dans le code de prod) pour
-# tester la seule chose qui m'appartient : l'orchestration du retry dans `ingest`.
+# juste False, sans exception). Les deux tests suivants couvrent l'orchestration du retry
+# via `_materialize` mocké (plus simple qu'une double corruption byte-exacte).
 def test_ingest_retries_on_bad_zip_then_succeeds(tmp_path, monkeypatch):
     """Régression de l'incident réel (BadZipFile 'Bad CRC-32' en pleine extraction d'un gros
     zip GitHub) : `ingest` retente le téléchargement complet plutôt que de planter direct."""
@@ -510,7 +623,7 @@ def test_ingest_retries_on_bad_zip_then_succeeds(tmp_path, monkeypatch):
             raise zipfile.BadZipFile("Bad CRC-32 for file 'x'")
         out.mkdir(parents=True, exist_ok=True)
         make_png(out / "Cards" / "OP01" / "OP01-001.png")
-        return out
+        return out, []   # (dossier, aucun membre corrompu)
 
     monkeypatch.setattr(packlib, "_download", fake_download)
     monkeypatch.setattr(packlib, "_resolve_url", lambda u: u)

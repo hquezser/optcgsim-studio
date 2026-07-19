@@ -167,7 +167,7 @@ def keep_rel(rel: str, only_categories: set[str] | None,
 
 # --------------------------------------------------------------------------- ingestion
 def _safe_extract(zf: zipfile.ZipFile, dest: Path,
-                  on_progress: OnProgress = _noop_progress) -> None:
+                  on_progress: OnProgress = _noop_progress) -> list[str]:
     """Extraction protégée contre le zip-slip (aucun membre hors de `dest`), avec progression.
 
     Les exports Dropbox de dossier incluent une entrée `/` en tête (marqueur du dossier
@@ -182,31 +182,60 @@ def _safe_extract(zf: zipfile.ZipFile, dest: Path,
     La vérification et l'extraction sont fusionnées en une seule passe membre par membre
     (plutôt que vérifier puis appeler `extractall`) : la progression (fichier N/total) en
     découle sans coût supplémentaire.
+
+    Le zip-slip reste une erreur DURE (sécurité, jamais tolérée). Un membre en CRC invalide,
+    en revanche, N'ARRÊTE PAS l'extraction des autres — son nom est collecté et renvoyé,
+    pour permettre à l'appelant un repli CIBLÉ (ne re-télécharger QUE ces quelques fichiers,
+    cf. `ingest`) plutôt que de perdre tout le travail déjà fait sur une archive de plusieurs
+    Go pour une poignée d'octets corrompus en transit.
     """
     dest = dest.resolve()
     members = zf.infolist()
     total = len(members)
+    corrupted: list[str] = []
     for i, member in enumerate(members, 1):
         name = member.filename.lstrip("/\\")
         if name:      # sinon : marqueur de dossier racine (entrée '/' des exports Dropbox)
             target = (dest / name).resolve()
             if not (target == dest or str(target).startswith(str(dest) + "/")):
                 raise PackError(f"Entrée d'archive hors dossier (zip-slip) : {member.filename}")
-        zf.extract(member, dest)
+        try:
+            zf.extract(member, dest)
+        except zipfile.BadZipFile:
+            corrupted.append(member.filename)
         on_progress("extract", i, total)
+    return corrupted
 
 
 def _materialize(archive: Path, out: Path, orig_name: str | None,
-                 on_progress: OnProgress = _noop_progress) -> Path:
+                 on_progress: OnProgress = _noop_progress) -> tuple[Path, list[str]]:
     """Rend une source téléchargée exploitable : extrait si c'est un zip, sinon dépose le
-    fichier unique (image partagée) sous son nom d'origine. Renvoie le dossier racine."""
+    fichier unique (image partagée) sous son nom d'origine. Renvoie (dossier racine, membres
+    en CRC invalide — vide si l'archive est intacte, ou toujours vide pour un fichier seul)."""
     if zipfile.is_zipfile(archive):
         with zipfile.ZipFile(archive) as zf:
-            _safe_extract(zf, out, on_progress=on_progress)
-        return out
+            corrupted = _safe_extract(zf, out, on_progress=on_progress)
+        return out, corrupted
     out.mkdir(parents=True, exist_ok=True)
     shutil.copy(archive, out / (orig_name or archive.name))
-    return out
+    return out, []
+
+
+def _repair_corrupted(out: Path, corrupted: list[str], source_url: str, token: str | None,
+                      on_progress: OnProgress) -> bool:
+    """Patch CIBLÉ : re-télécharge SEULEMENT les quelques fichiers en CRC invalide (via l'API
+    Contents GitHub, fichier par fichier), au lieu de perdre toute l'extraction déjà réussie
+    et retélécharger l'archive ENTIÈRE pour une poignée d'octets corrompus en transit.
+
+    Renvoie False (repli sur un nouveau téléchargement complet, seul recours restant) si la
+    source n'est pas un dépôt GitHub explorable ou si le patch échoue à son tour."""
+    from . import sourcefetch   # import local : évite un cycle, coût nul si non utilisé
+    try:
+        sourcefetch.fetch_selected(source_url, corrupted, out, token=token,
+                                   on_progress=on_progress)
+        return True
+    except sourcefetch.FetchError:
+        return False
 
 
 def _download(url: str, dest_zip: Path, timeout: float = 60.0,
@@ -316,11 +345,19 @@ def _drive_download(file_id: str, dest: Path, timeout: float = 60.0,
 
 
 def ingest(source: str | Path, work_dir: Path,
-          on_progress: OnProgress = _noop_progress) -> Path:
+          on_progress: OnProgress = _noop_progress, token: str | None = None) -> Path:
     """Résout une source (dossier, zip local, URL) en un dossier local extrait.
 
     Le réseau n'est touché que pour les URL http(s) ; dossiers et zips locaux sont hors-ligne.
     Renvoie le dossier racine des fichiers extraits.
+
+    Si l'archive téléchargée contient des membres en CRC invalide (corruption réseau en
+    transit — rencontré en usage réel sur un dépôt GitHub de 2,2 Go), on ne jette PAS tout le
+    travail déjà fait pour retélécharger l'archive entière : `_repair_corrupted` tente d'abord
+    un patch CIBLÉ (ne re-fetch QUE ces quelques fichiers, via l'API Contents GitHub si la
+    source est un dépôt explorable). Le repli sur un nouveau téléchargement complet
+    (3 tentatives) ne survient que si ce patch est impossible ou échoue à son tour. `token` :
+    PAT GitHub, utilisé UNIQUEMENT par ce patch ciblé (dépôt privé).
     """
     work_dir.mkdir(parents=True, exist_ok=True)
     s = str(source)
@@ -334,7 +371,10 @@ def ingest(source: str | Path, work_dir: Path,
         for attempt in range(1, _MAX_DOWNLOAD_ATTEMPTS + 1):
             try:
                 fname = _drive_download(fid, blob, on_progress=on_progress)
-                return _materialize(blob, work_dir / "extracted", fname, on_progress)
+                out, corrupted = _materialize(blob, work_dir / "extracted", fname, on_progress)
+                if corrupted and not _repair_corrupted(out, corrupted, s, token, on_progress):
+                    raise zipfile.BadZipFile(f"CRC invalide pour {len(corrupted)} fichier(s)")
+                return out
             except (urllib.error.URLError, zipfile.BadZipFile) as e:
                 last_err = e
                 if attempt == _MAX_DOWNLOAD_ATTEMPTS:
@@ -348,7 +388,12 @@ def ingest(source: str | Path, work_dir: Path,
         for attempt in range(1, _MAX_DOWNLOAD_ATTEMPTS + 1):
             try:
                 _download(url, zpath, on_progress=on_progress)
-                return _materialize(zpath, work_dir / "extracted", None, on_progress)
+                out, corrupted = _materialize(zpath, work_dir / "extracted", None, on_progress)
+                if corrupted and not _repair_corrupted(out, corrupted, s, token, on_progress):
+                    raise zipfile.BadZipFile(
+                        f"CRC invalide pour {len(corrupted)} fichier(s), patch impossible : "
+                        + ", ".join(corrupted[:3]) + ("…" if len(corrupted) > 3 else ""))
+                return out
             except (urllib.error.URLError, zipfile.BadZipFile) as e:
                 last_err = e
                 if attempt == _MAX_DOWNLOAD_ATTEMPTS:
@@ -361,7 +406,13 @@ def ingest(source: str | Path, work_dir: Path,
     if p.suffix.lower() == ".zip" and p.is_file():
         out = work_dir / "extracted"
         with zipfile.ZipFile(p) as zf:
-            _safe_extract(zf, out, on_progress=on_progress)
+            corrupted = _safe_extract(zf, out, on_progress=on_progress)
+        if corrupted:
+            # zip LOCAL : pas de source réseau pour un patch ciblé, rien à retélécharger non
+            # plus (c'est déjà le fichier de l'utilisateur) -> échec direct, pas de retry.
+            raise PackError(f"{len(corrupted)} fichier(s) en CRC invalide dans l'archive "
+                            f"(corrompue) : {', '.join(corrupted[:3])}"
+                            + ("…" if len(corrupted) > 3 else ""))
         return out
     raise PackError(f"Source non exploitable (ni dossier, ni zip, ni URL) : {source}")
 
@@ -588,7 +639,7 @@ def add_pack(source: str | Path, install: GameInstall, name: str | None = None,
                                                  token=token, on_progress=on_progress)
         # --- chemin complet (défaut / sources non explorables) ---
         if src is None:
-            src = ingest(source, work, on_progress=on_progress)
+            src = ingest(source, work, on_progress=on_progress, token=token)
         # racine « utile » : si un seul sous-dossier enveloppe tout (zip GitHub), descendre
         entries = [p for p in src.iterdir()] if src.is_dir() else []
         if len(entries) == 1 and entries[0].is_dir():

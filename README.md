@@ -256,10 +256,14 @@ affiche la recette `git remote add … && git push` à lancer toi-même. Un dép
 ~900 Mo est signalé (scinde-le). Ces dépôts d'images restent **privés** (tu n'es pas l'ayant
 droit).
 
-**Téléchargement corrompu** (coupure réseau en cours de route, CRC invalide) : `repos
-build`/`update` retentent automatiquement (3 tentatives) avant d'abandonner avec un message
-clair — plutôt qu'une trace Python brute. `--path-prefix` sur une source GitHub (fetch
-sélectif ci-dessus) réduit aussi fortement l'exposition à ce problème sur les gros dépôts.
+**Téléchargement corrompu** (coupure réseau en cours de route, CRC invalide) : si SEULS
+quelques fichiers d'une archive GitHub sont en défaut, le studio ne rejette pas tout le
+téléchargement déjà fait — il **patche uniquement ces fichiers** (API Contents, comme le
+fetch sélectif ci-dessus) au lieu de retélécharger l'archive entière. Ce n'est que si le
+patch est impossible (source non GitHub) ou échoue à son tour que `repos build`/`update`
+retentent un téléchargement complet (3 tentatives) avant d'abandonner avec un message clair
+— plutôt qu'une trace Python brute. `--path-prefix` sur une source GitHub réduit aussi
+fortement l'exposition à ce problème sur les gros dépôts (moins de données transférées).
 
 **Mettre à jour à chaque sortie de set**, sans retaper les liens :
 

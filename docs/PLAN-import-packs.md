@@ -461,6 +461,32 @@ Fix :
   pas de fetch sélectif sans préfixe, retry réussi puis retry épuisé. 175 verts. Réseau réel
   vérifié (API Tree GitHub répond correctement depuis cet environnement).
 
+### (j) Réparation CIBLÉE au lieu d'un nouveau téléchargement complet (2026-07-19)
+
+Retour direct sur (i) : « récupérer le fichier temporaire du téléchargement avant extraction
+au lieu de le retélécharger ». Le retry (i) redemandait l'archive ENTIÈRE à chaque tentative
+— gaspillage évitable pour une corruption qui, en pratique, ne touche qu'UNE poignée de
+membres sur plusieurs milliers (le CRC est vérifié par fichier).
+
+- `_safe_extract` devient TOLÉRANT : n'arrête plus l'extraction au premier membre en CRC
+  invalide (le zip-slip, lui, reste une erreur DURE — sécurité, jamais toléré). Elle collecte
+  les noms des membres en défaut et continue, plutôt que de perdre tout le travail déjà fait
+  sur les milliers d'autres membres sains.
+- `_materialize` renvoie désormais `(dossier, membres_corrompus)`.
+- `_repair_corrupted(out, corrompus, source_url, token, on_progress)` : patch CIBLÉ — ne
+  re-télécharge QUE les quelques fichiers en défaut, via `sourcefetch.fetch_selected` (API
+  Contents GitHub, fichier par fichier). Renvoie `False` (repli sur un nouveau téléchargement
+  complet — seul recours restant) si la source n'est pas un dépôt GitHub explorable ou si le
+  patch échoue à son tour.
+- `ingest()` tente ce patch AVANT de retomber sur le retry complet (i) : sur le repo FR réel,
+  une poignée de fichiers corrompus ne coûterait plus qu'une poignée de requêtes API Contents,
+  pas un nouveau téléchargement de 2,2 Go.
+- Tests : extraction tolérante démontrée par corruption BYTE-EXACTE d'un vrai zip (CRC
+  falsifié précisément, pas juste simulé), patch réussi via sourcefetch mocké, repli propre
+  quand la source n'est pas explorable — et surtout le test de bout en bout qui prouve
+  l'économie : `_download` appelé **une seule fois**, seul le fichier en défaut est re-fetché,
+  le reste de l'archive (des milliers de fichiers sains) n'est jamais retouché. 180 verts.
+
 ## Chantier P9 — Publier le format « pack de decks » (contribution communautaire)
 
 Objectif : permettre à la communauté de créer et partager des packs de decks (le format
