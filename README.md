@@ -229,6 +229,11 @@ build` sans `--path-prefix` d'abord, en lisant les non-classés/collisions du ra
 les repérer). Chaque configuration est mémorisée séparément : `studio repos update --out …`
 rejoue les deux.
 
+Le préfixe ne restreint QUE les cartes/DON!! (seules catégories canonicalisées par id, donc à
+risque de collision) — un `TRANSLATION.txt`, des playmats ou des dos de carte à la racine de
+la source (hors des deux sous-dossiers) sont inclus dans **chaque** build scopé, pas besoin
+d'un 3ᵉ appel dédié.
+
 Sources : **GitHub** (dépôt/zip) et **Dropbox** (dossier partagé → zip) sont téléchargés
 entiers ; **Google Drive** est géré pour les **fichiers/zip partagés** (« tout le monde avec
 le lien ») — un *dossier* Drive n'a pas d'export zip public, partage-le en `.zip`. Chaque

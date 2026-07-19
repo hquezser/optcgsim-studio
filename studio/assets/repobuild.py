@@ -57,6 +57,10 @@ _FIXED_FAMILY = {"cardbacks": "cardbacks", "playmats": "playmats",
 
 GITHUB_SOFT_LIMIT = 900 * 1024 * 1024   # ~900 Mo : au-delà, on conseille de scinder
 _LOG_NAME = ".repos-build.json"
+# Catégories que --path-prefix restreint : uniquement celles canonicalisées par id de carte
+# (donc à risque de collision de variante). translation/playmats/cardbacks/backgrounds sont
+# des assets partagés, hors sujet -> toujours inclus quel que soit le préfixe.
+_PREFIX_SCOPED_CATEGORIES = {"cards", "don"}
 
 
 @dataclass
@@ -161,12 +165,16 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
           on_progress: packlib.OnProgress = packlib._noop_progress) -> RepoBuildReport:
     """Ingère chaque source, route chaque fichier vers son dépôt de famille, écrit les dépôts.
 
-    `path_prefix` scope l'ingestion à un SOUS-DOSSIER de la source (ex. "FR_classique") —
-    utile quand une même source mélange plusieurs VARIANTES de la même carte (classique ET
-    alternative, par exemple) : le nom canonique retire les suffixes parasites (`_alt`,
-    `_OVERRIDE`…) pour produire UN fichier par id, donc deux variantes traitées dans le MÊME
-    appel entreraient en collision (dernière gagnante). Lancer un `build()` par variante, avec
-    un `cards_as` distinct (ex. "translated" puis "translated-alt") et un `path_prefix` qui
+    `path_prefix` scope l'ingestion à un SOUS-DOSSIER de la source (ex. "FR_classique"),
+    mais UNIQUEMENT pour les catégories `cards`/`don` (canonicalisées par id, donc à risque de
+    collision) — utile quand une même source mélange plusieurs VARIANTES de la même carte
+    (classique ET alternative, par exemple) : le nom canonique retire les suffixes parasites
+    (`_alt`, `_OVERRIDE`…) pour produire UN fichier par id, donc deux variantes traitées dans
+    le MÊME appel entreraient en collision (dernière gagnante). Les autres catégories
+    (traduction, tapis, dos de carte…) sont des assets PARTAGÉS, hors sujet du préfixe — un
+    `TRANSLATION.txt` à la racine est inclus dans CHAQUE build scopé, pas besoin d'un 3e appel.
+    Lancer un `build()` par variante, avec un `cards_as` distinct (ex. "translated" puis
+    "translated-alt") et un `path_prefix` qui
     scope chacun à son sous-dossier, les préserve toutes les deux — chacune dans sa famille.
 
     Ré-exécutable sans risque sur un `out_dir` déjà construit (les fichiers déjà présents sont
@@ -185,10 +193,15 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
         for f in _iter_files(root):
             rel = f.relative_to(root)
             rel_str = str(rel).replace("\\", "/")
-            if prefix and not (rel_str == prefix or rel_str.startswith(prefix + "/")):
+            cat, cid = packlib.classify_rel(rel_str)
+            # le préfixe ne scope QUE les catégories à risque de collision de variante
+            # (cards/don, canonicalisées par id) ; le reste (traduction, tapis, dos…) est un
+            # asset partagé, hors du problème que --path-prefix résout, donc toujours inclus —
+            # sinon un TRANSLATION.txt à la racine serait exclu par CHAQUE build scopé.
+            if (prefix and cat in _PREFIX_SCOPED_CATEGORIES
+                    and not (rel_str == prefix or rel_str.startswith(prefix + "/"))):
                 rep.excluded_by_prefix += 1
                 continue
-            cat, cid = packlib.classify_rel(rel_str)
             fam, target_rel = route(cat, cid, f.name, cards_as, split_cards_by_type)
             if fam is None:
                 rep.unclassified.append({"source": src, "path": rel_str})

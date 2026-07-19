@@ -239,9 +239,26 @@ def test_path_prefix_splits_variants_into_separate_families(tmp_path):
     assert rep_classic.collisions == [] and rep_alt.collisions == []
     assert (out / "translations" / "Leaders" / "Cards" / "OP01" / "OP01-001.png").is_file()
     assert (out / "translated-alt" / "Leaders" / "Cards" / "OP01" / "OP01-001.png").is_file()
-    # chaque build ignore délibérément les fichiers hors de son préfixe
-    assert rep_classic.excluded_by_prefix >= 1   # FR_alt/... et TRANSLATION.txt exclus
-    assert rep_alt.excluded_by_prefix >= 1        # FR_classique/... et TRANSLATION.txt exclus
+    # chaque build exclut la variante CARTE hors de son préfixe (l'AUTRE variante)…
+    assert rep_classic.excluded_by_prefix == 1   # FR_alt/OP01-001_alt.png
+    assert rep_alt.excluded_by_prefix == 1        # FR_classique/OP01-001_OVERRIDE.png
+    # …mais PAS l'asset partagé (TRANSLATION.txt, à la racine, hors des deux dossiers) : il
+    # n'a aucun risque de collision de variante, donc --path-prefix ne l'exclut jamais.
+    assert (out / "translations" / "TRANSLATION.txt").is_file()
+
+
+def test_path_prefix_never_excludes_shared_translation_file(tmp_path):
+    """Régression exacte du doute exprimé par l'utilisateur : un TRANSLATION.txt à la racine
+    (hors de tout dossier de variante) doit être inclus dans CHAQUE build scopé par
+    --path-prefix, pas seulement dans un build « sans préfixe » séparé."""
+    src = _fr_mixed_source(tmp_path / "src")
+    out = tmp_path / "out"
+    ingest = lambda s, wd, on_progress=None: src
+    rep = repobuild.build(["fr"], out, cards_as="translated",
+                          path_prefix="FR_classique", ingest=ingest, git_init=False)
+    assert (out / "translations" / "TRANSLATION.txt").read_text() == "Key=Val\n"
+    # le fichier partagé n'est jamais compté comme "hors périmètre"
+    assert rep.excluded_by_prefix == 1   # uniquement FR_alt/OP01-001_alt.png
 
 
 def test_path_prefix_recorded_and_replayed_by_update(tmp_path):

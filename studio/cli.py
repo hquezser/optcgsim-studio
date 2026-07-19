@@ -623,10 +623,12 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--no-git", action="store_true",
                     help="ne pas exécuter git init dans chaque dépôt")
     rb.add_argument("--path-prefix", default=None,
-                    help="ne traiter que ce sous-dossier de la source (ex. FR_classique) — "
-                         "utile quand une même source mélange plusieurs variantes de la "
-                         "même carte (classique/alternative) : un build par variante avec "
-                         "un --cards-as et un --path-prefix distincts évite la collision")
+                    help="ne traiter que les CARTES/DON!! sous ce sous-dossier de la source "
+                         "(ex. FR_classique) — utile quand une même source mélange plusieurs "
+                         "variantes de la même carte (classique/alternative) : un build par "
+                         "variante avec un --cards-as et un --path-prefix distincts évite la "
+                         "collision. N'exclut jamais traduction/playmats/dos de carte, qui "
+                         "sont des assets partagés hors sujet du préfixe.")
     rb.set_defaults(func=cmd_repos_build)
 
     ru = sr.add_parser("update",

@@ -400,6 +400,14 @@ perte silencieuse si le rapport n'est pas lu).
 - Tests : collision démontrée sans préfixe, séparation propre avec préfixes, journal + replay
   par `update()` des deux configurations. 164 verts.
 
+**Fix immédiat (même jour)** : l'utilisateur a demandé si un `TRANSLATION.txt` HORS des deux
+sous-dossiers (à la racine de la source) serait quand même pris en compte — la réponse était
+NON avec la première implémentation (le filtre excluait tout ce qui n'était pas sous le
+préfixe, y compris les assets partagés). Corrigé : `--path-prefix` ne restreint QUE les
+catégories `cards`/`don` (les seules canonicalisées par id, donc à risque de collision) ;
+traduction/playmats/dos de carte sont des assets partagés, toujours inclus quel que soit le
+préfixe — pas besoin d'un 3ᵉ appel juste pour la traduction. +2 tests. 165 verts.
+
 ## Chantier P9 — Publier le format « pack de decks » (contribution communautaire)
 
 Objectif : permettre à la communauté de créer et partager des packs de decks (le format
