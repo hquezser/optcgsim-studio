@@ -126,6 +126,26 @@ def test_build_routes_into_family_repos(tmp_path):
     assert cb["file_count"] == 1 and cb["by_type"] == {}
 
 
+def test_build_theme_junk_txt_files_never_pollute_translations(tmp_path):
+    """Régression EXACTE de l'incident réel : un thème (lien direct, aucune traduction) contient
+    un README d'installation et un placeholder texte ; aucun des deux ne doit atterrir dans
+    translations/ (dépôt qui ne devrait alors même pas exister, faute de vraie traduction)."""
+    src = tmp_path / "theme"
+    make_png(src / "Playmats" / "Blue.png", 1920, 1080)
+    make_png(src / "CardBacks" / "CardBackRegular.png")
+    (src / "instructions.txt").write_text(
+        "*** How to Install ***\n\n1. Copy the contents to your install's StreamingAssets…")
+    (src / "CardBackRegular.txt").write_text("test")   # erreur d'extension côté auteur du thème
+    out = tmp_path / "out"
+    rep = repobuild.build(["theme-link"], out, cards_as="alt",
+                          ingest=lambda s, wd, on_progress=None: src, git_init=False)
+
+    assert not (out / "translations").exists()   # aucune vraie traduction -> pas de dépôt
+    assert "playmats" in rep.repos and "cardbacks" in rep.repos
+    unclassified_paths = {u["path"] for u in rep.unclassified}
+    assert unclassified_paths == {"instructions.txt", "CardBackRegular.txt"}
+
+
 def test_build_collision_last_source_wins(tmp_path):
     a = _minimal_card_src(tmp_path / "a", "OP01-001.png")
     b = _minimal_card_src(tmp_path / "b", "OP01-001.png")

@@ -130,7 +130,9 @@ pack canonique de bibliothèque, par classification fichier par fichier :
 - sous une racine miroir (`Cards/`, `Playmats/`…) → chemin préservé (Themer, Dropbox) ;
 - nom = id de carte, suffixes parasites retirés (`_OVERRIDE` du patch FR, `_alt`…) →
   `Cards/<SET>/<ID>.png` ;
-- `.txt` en `Clé=Valeur` → traduction ; noms de dos/tapis/fond reconnus → catégorie ;
+- `.txt` dont le nom contient « translation » → traduction ; noms de dos/tapis/fond reconnus →
+  catégorie (un `.txt` quelconque bundlé dans un thème — README d'installation, placeholder…
+  — n'est PAS pris pour une traduction) ;
 - **tout le reste → rapporté « non classé » avec raison** (jamais de perte silencieuse).
 
 ```bash

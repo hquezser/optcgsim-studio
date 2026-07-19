@@ -519,6 +519,30 @@ Fix :
   "rate limit exceeded" sur le vrai repo, confirmation que le CDN reste disponible juste après
   (aucun en-tête de limite), confirmation que le contenu réel (PNG, pas LFS) est bien servi.
 
+### (l) Fix — `classify_rel` traitait N'IMPORTE QUEL `.txt` comme une traduction (2026-07-19)
+
+Incident réel n°3 : après un build réel complet, l'utilisateur demande si
+`~/optcgsim-repos/translations/` est utile. Inspection directe (contenu des fichiers, pas
+supposé) : le dossier contenait `instructions.txt` (le README « How to Install » d'un thème
+importé via lien direct) et `CardBackRegular.txt` (contenu littéral : `"test"` — un
+placeholder, probablement une erreur d'extension côté auteur du thème). Aucun des deux n'est
+une traduction. Cause : `classify_rel` classait TOUT fichier `.txt` en catégorie
+`"translation"`, sans regarder le nom — alors que `packlib._is_translation()` (utilisé par
+`normalize()`, le pipeline de `packs add`) exige déjà ≥5 lignes `Clé=Valeur`. Deux pipelines
+avec deux critères différents pour la même notion, et celui utilisé par `repos build`
+(`classify_rel`, via `route()`) était le plus laxiste.
+
+`classify_rel` classe aussi des chemins DISTANTS (chaînes, pas encore téléchargés — fetch
+sélectif GitHub) : impossible d'y lire le contenu. Fix resté NAME-BASED, mais resserré : un
+`.txt` n'est catégorie `translation` QUE si son nom contient « translation » (insensible à la
+casse) ; sinon il tombe dans `other` (non classé, signalé), comme n'importe quel fichier sans
+rapport. Dossier junk supprimé (`rm -rf ~/optcgsim-repos/translations/`, 2 fichiers de bruit).
+
+Tests : `instructions.txt`/`CardBackRegular.txt`/`README.txt` -> `other` ; `Translation_FR.txt`
+reconnu (variante de casse/nom) ; test de bout en bout reproduisant l'incident exact (thème
+avec playmat+cardback+2 .txt junk) -> AUCUN dépôt `translations/` créé, les 2 .txt rapportés
+en non-classés. 188 verts.
+
 ## Chantier P9 — Publier le format « pack de decks » (contribution communautaire)
 
 Objectif : permettre à la communauté de créer et partager des packs de decks (le format

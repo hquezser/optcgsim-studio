@@ -129,7 +129,14 @@ def classify_rel(rel: str) -> tuple[str, str | None]:
     dot = name.rfind(".")
     stem, ext = (name[:dot], name[dot:].lower()) if dot >= 0 else (name, "")
     if ext == ".txt":
-        return ("translation", None)
+        # Restreint au nom (pas le contenu : cette fonction classe aussi des chemins DISTANTS
+        # pas encore téléchargés, rien à lire). Un .txt quelconque (README/instructions bundlé
+        # dans un thème, fichier placeholder…) n'est PAS une traduction — rencontré en usage
+        # réel : un thème contenait "instructions.txt" et un "CardBackRegular.txt" (contenu :
+        # "test") qui atterrissaient à tort dans la famille traduction.
+        if "translation" in stem.lower():
+            return ("translation", None)
+        return ("other", None)
     if ext not in IMAGE_EXT:
         return ("other", None)
     for i, p in enumerate(parts[:-1]):

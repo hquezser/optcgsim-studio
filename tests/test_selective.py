@@ -41,6 +41,19 @@ def test_classify_rel_categories():
     assert packlib.classify_rel("random.png") == ("other", None)
 
 
+def test_classify_rel_only_real_translation_txt_not_any_txt():
+    """Régression réelle : un thème (lien direct) contenait un « instructions.txt » (README
+    d'installation) et un « CardBackRegular.txt » (placeholder, contenu "test") -- tous deux
+    finissaient à tort en catégorie "translation" (n'importe quel .txt matchait), polluant le
+    dépôt translations/ avec du bruit sans rapport. Seul le nom contenant "translation"
+    (insensible à la casse) compte désormais ; cette fonction ne lit jamais le contenu (elle
+    classe aussi des chemins DISTANTS pas encore téléchargés)."""
+    assert packlib.classify_rel("instructions.txt") == ("other", None)
+    assert packlib.classify_rel("CardBackRegular.txt") == ("other", None)
+    assert packlib.classify_rel("README.txt") == ("other", None)
+    assert packlib.classify_rel("Translation_FR.txt") == ("translation", None)  # variante de casse/nom
+
+
 def test_keep_rel_only_categories():
     assert packlib.keep_rel("Cards/OP01/OP01-001.png", {"cards"}, None)
     assert not packlib.keep_rel("Playmats/Blue.png", {"cards"}, None)
