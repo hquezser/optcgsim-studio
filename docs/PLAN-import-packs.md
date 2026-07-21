@@ -901,13 +901,23 @@ P10-c (« Importer une collection » marche, mais part d'un champ vide chaque fo
   OU une URL http(s) (avec token si `github(usercontent).com`) — ce chantier n'ajoute AUCUNE
   nouvelle logique de fetch/parsing, seulement la MÉMORISATION d'une source par défaut et son
   auto-chargement au lieu d'un copier-coller manuel.
-- **Pré-requis à vérifier avant d'activer P12** (gap pré-existant, déjà documenté en P10,
-  hors périmètre de ce chantier) : `collection.json` actuel a ses 6 entrées en
-  `variant_group: null` (perdu — probablement réécrasé par un `repos update` depuis la
-  curation manuelle initiale). Il faudrait le recompléter à la main
-  (`translated-fr-classic`/`translated-fr-fullart` en `variant_group: "cards"`, les 4 autres
-  restent `null`) AVANT de s'appuyer dessus comme défaut, sinon la collection proposée montre
-  6 cases indépendantes au lieu de 2 alternatives (radio) + 4 compléments (case cochée).
+- **Pré-requis vérifié et CORRIGÉ (2026-07-21)** (gap pré-existant, déjà documenté en P10,
+  hors périmètre de ce chantier — corrigé ici en passant car bloquant pour tester P12) :
+  `collection.json` avait perdu ses `variant_group` (repassés à `null` — probablement
+  réécrasés par un `repos update` depuis la curation manuelle initiale). Recomplété à la main
+  avec DEUX groupes, pas un seul : `translated-fr-classic`/`translated-fr-fullart` en
+  `variant_group: "fr-cards"` (deux images de cartes qui écrasent la MÊME cible — l'exemple
+  historique) ET **`translations-fr` en `variant_group: "translations"`** — même raisonnement
+  exactement : `TRANSLATION.txt` est un fichier UNIQUE, donc toute future traduction
+  alternative écraserait la même cible que `translations-fr` et devrait lui être exclusive
+  (radio), pas s'ajouter en complément. `cards-alt`/`cardbacks`/`playmats` restent `null`
+  (compléments — rien ne les met en concurrence avec un autre pack de la collection). Un
+  groupe à 1 seul membre (cas actuel de `translations`) est inerte (rendu radio à choix
+  unique, toujours coché) mais prêt à accueillir une 2ᵉ variante sans retoucher le JSON.
+  **Généralisation retenue pour le reste du plan** : le critère pour choisir un
+  `variant_group` n'est PAS « est-ce une famille de cartes ? » mais « est-ce que ce pack
+  écrase la MÊME cible qu'un autre pack de la collection ? » — cards, translations, et toute
+  future catégorie (dos de carte, tapis…) suivent la même règle dès qu'une alternative existe.
 
 ### Décisions de conception
 
