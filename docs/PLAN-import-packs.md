@@ -1,12 +1,13 @@
 # PLAN — Import ergonomique de packs communautaires (cartes + customs)
 
-> **AVANCEMENT (2026-07-21)** — P0→P11 tous FAITS (voir tableau « Ordre et effort » en fin de
-> plan). Dernier en date : P11 (sync decks jeu -> studio, génération de deckpacks depuis la
-> base, provenance par deck). 236 tests verts. `studio ui` fonctionne de bout en bout :
+> **AVANCEMENT (2026-07-21)** — P0→P12 tous FAITS (voir tableau « Ordre et effort » en fin de
+> plan). Dernier en date : P12 (collection par défaut — auto-analyse au démarrage de
+> `studio ui`, bouton « Définir par défaut », ligne Réglages avec oublie). 244 tests verts.
+> `studio ui` fonctionne de bout en bout :
 > add/apply/remove/update/reapply, dropzone, couverture de decks, jobs qui survivent à la
 > fermeture de l'onglet, import guidé d'une collection multi-dépôts, sync bidirectionnelle
-> jeu<->studio pour les decks, export de decks en pack partageable.
-> **P12 (collection par défaut) est PLANIFIÉ, pas encore implémenté** — voir sa section.
+> jeu<->studio pour les decks, export de decks en pack partageable, collection par défaut
+> qui se recharge automatiquement à l'ouverture de la page.
 >
 > Objectif : un utilisateur pointe une SOURCE (zip, dossier, URL) et le studio fait le
 > reste — analyse, normalisation, prévisualisation, application, mise à jour, restauration.
@@ -877,7 +878,7 @@ initial est l'extraction de `sync_with_store` en fonction pure partagée CLI/API
 logique inline dupliquée dans les deux, pour éviter deux implémentations d'un même algorithme
 de diff à maintenir en synchronisation).
 
-## Chantier P12 — Collection par défaut (🅿️ PLANIFIÉ — pas encore implémenté)
+## Chantier P12 — Collection par défaut (✅ FAIT — 2026-07-21)
 
 Objectif : par défaut, les packs de thèmes/cartes alternatives que l'utilisateur héberge
 lui-même sur son GitHub (`~/optcgsim-repos`, produits par `repos build`/P10) doivent être
@@ -988,6 +989,38 @@ comme aujourd'hui. Aucune application automatique en fond.
 Effort estimé : ~¼-½ session (config + extension d'une route existante + petit JS ; tout le
 reste — fetch, parsing, rendu, import — existe déjà depuis P10-c).
 
+### Implémentation (2026-07-21)
+
+Tous les changements prévus ont été faits, dans l'ordre ci-dessus :
+
+1. `studio/config.py` : `Config.default_collection_source` (property) +
+   `Config.set_default_collection_source(source)` (efface sur `None`/`""`), non-secret —
+   renvoyé en clair par l'API. 12 tests `test_config.py` verts.
+2. `studio/api/server.py` : `get_config()` renvoie désormais
+   `{github_token_set, default_collection_source}` ; `POST /api/config` accepte les deux
+   clés indépendamment (clé absente = inchangé, `null` = efface). 8 nouveaux tests API
+   (total 244 verts).
+3. `studio/api/static/index.html` :
+   - `autoloadDefaultCollection()` appelée au chargement : si une source par défaut existe
+     ET que l'utilisateur n'a rien saisi/affiché, pré-remplit `#collection-src` et appelle
+     `analyseCollection()` — zéro clic pour voir les packs.
+   - Bouton « Définir par défaut » à côté de « Analyser » (caché jusqu'à une analyse
+     réussie) → `POST /api/config {default_collection_source: <src>}`.
+   - Section « Réglages » (renommée depuis « Réglages — token GitHub ») : ligne
+     « Collection par défaut : <src|aucune> » + bouton « Oublier ».
+4. `studio/cli.py` : `studio config set-default-collection [source]` (`nargs="?"`, vide =
+   effacer), symétrique à `set-github-token`.
+5. `cmd_repos_build` : si `--collection-label`/`--collection-group` utilisé et aucune
+   source par défaut configurée, imprime un rappel `studio config set-default-collection
+   <out_dir>/collection.json` en fin de run.
+
+**Vérification manuelle (chrome-devtools MCP)** : avec
+`default_collection_source=/Users/hugoq/optcgsim-repos/collection.json`, au chargement de
+`http://127.0.0.1:3737/` la section « Importer une collection » affiche automatiquement
+« FR classique + full-art » (6 packs, radios + compléments) sans aucun clic ; boutons
+« Définir par défaut » et « Oublier » testés (persistent/effacent via `POST /api/config`).
+244 tests pytest verts, zéro erreur console (hors 404 favicon pré-existant).
+
 ## Garde-fous inchangés
 
 Le chemin d'écriture unique reste `_swap` (whitelist, magic-bytes+dimensions, atomique,
@@ -1011,7 +1044,7 @@ annoncée), jamais automatiquement en arrière-plan hors `packs update`.
 | P9 | publier le format deckpack (spec + validate contributeur) | ~½ session | ✅ fait (repo optcgsim-deckpacks : spec+schema+exemple+validate CI ; studio: schema_version + validate-pack) |
 | P10 | collections de packs (import multi-dépôts guidé, variantes vs complémentaires) | ~1 session | ✅ fait (a→d, format+génération CLI+route API+UI+tests ; 211 tests verts) |
 | P11 | sync decks jeu -> studio, génération de deckpacks, provenance par deck | ~1 session | ✅ fait (scan+diff additif, `generate()`, routes+CLI+UI+tests ; 236 tests verts) |
-| P12 | collection par défaut (proposer ses propres packs GitHub sans copier-coller) | ~¼-½ session | 🅿️ planifié (voir chantier ci-dessus) |
+| P12 | collection par défaut (proposer ses propres packs GitHub sans copier-coller) | ~¼-½ session | ✅ fait (2026-07-21) |
 
 Décisions ouvertes historiques (résolues) :
 - `Custom Cards`/`Extra Alts` (Dropbox) : le rapport « non-classés » de P1 les révèle.

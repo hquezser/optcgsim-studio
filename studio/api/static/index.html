@@ -157,6 +157,8 @@
     <div class="row">
       <input id="collection-src" placeholder="URL du collection.json, ou /chemin local" style="flex:1">
       <button id="collection-analyse-btn" onclick="analyseCollection()">Analyser</button>
+      <button id="collection-default-btn" class="mini ghost" style="display:none"
+              onclick="setDefaultCollection()">Définir par défaut</button>
     </div>
     <div id="collection-result"></div>
   </section>
@@ -190,7 +192,7 @@
   </section>
 
   <section>
-    <h2>Réglages — token GitHub (dépôts privés)</h2>
+    <h2>Réglages</h2>
     <p class="sub">Pour explorer/importer sélectivement un dépôt GitHub <b>privé</b> (ton pack
       perso), colle un Personal Access Token (scope <code>repo</code>). Stocké localement,
       jamais affiché ni envoyé ailleurs. Inutile pour un dépôt public.</p>
@@ -199,6 +201,15 @@
       <button class="ghost" onclick="saveToken()">Enregistrer</button>
     </div>
     <div class="hint" id="token-state"></div>
+
+    <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+      <p class="sub" style="margin:0 0 8px">Collection par défaut — auto-analysée à
+        l'ouverture de cette page (section « Importer une collection » ci-dessus), pour
+        proposer tes propres packs GitHub sans recoller la source à chaque fois.</p>
+      <div class="hint" id="default-collection-state"></div>
+      <button class="mini ghost" id="default-collection-forget-btn" style="display:none;margin-top:6px"
+              onclick="forgetDefaultCollection()">Oublier</button>
+    </div>
   </section>
 </main>
 
@@ -486,6 +497,7 @@ async function analyseCollection(){
     _collection = await api('/collections/resolve', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({source})});
     renderCollection(_collection);
+    $('#collection-default-btn').style.display = '';
   }catch(e){ toast(e.message, 1); $('#collection-result').innerHTML=''; }
   finally{ btn.disabled = false; }
 }
@@ -568,6 +580,56 @@ async function loadTokenState(){
       ? '✓ un token est configuré (dépôts privés accessibles).'
       : 'Aucun token configuré (dépôts publics uniquement).';
   }catch{}
+}
+
+// ----- P12 : collection par défaut (auto-chargement au démarrage) -----
+async function loadDefaultCollectionState(){
+  try{
+    const c = await api('/config');
+    const src = c.default_collection_source || null;
+    const box = $('#default-collection-state');
+    const forgetBtn = $('#default-collection-forget-btn');
+    if(src){
+      box.textContent = `✓ collection par défaut : ${src}`;
+      forgetBtn.style.display = '';
+    }else{
+      box.textContent = 'Aucune collection par défaut définie.';
+      forgetBtn.style.display = 'none';
+    }
+    return src;
+  }catch{ return null; }
+}
+
+async function setDefaultCollection(){
+  const src = $('#collection-src').value.trim();
+  if(!src) return toast("Indique d'abord une source dans le champ ci-dessus.", 1);
+  try{
+    await api('/config',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({default_collection_source: src})});
+    toast('Collection par défaut enregistrée.');
+    loadDefaultCollectionState();
+  }catch(e){ toast(e.message, 1); }
+}
+
+async function forgetDefaultCollection(){
+  try{
+    await api('/config',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({default_collection_source: null})});
+    toast('Collection par défaut oubliée.');
+    loadDefaultCollectionState();
+  }catch(e){ toast(e.message, 1); }
+}
+
+async function autoloadDefaultCollection(){
+  const src = await loadDefaultCollectionState();
+  if(!src) return;
+  // ne pas écraser si l'utilisateur a déjà quelque chose en cours
+  if($('#collection-src').value.trim()) return;
+  if($('#collection-result').innerHTML.trim()) return;
+  $('#collection-src').value = src;
+  // bouton « Définir par défaut » désormais pertinent
+  $('#collection-default-btn').style.display = '';
+  analyseCollection();
 }
 
 async function uploadZip(file){
@@ -661,6 +723,7 @@ document.querySelectorAll('.f-type, .f-cat').forEach(
 
 loadStatus().catch(e=>$('#status').innerHTML=`<span style="color:var(--accent)">${e.message}</span>`);
 loadPacks(); loadDecks(); loadTokenState();
+autoloadDefaultCollection();   // P12 : auto-analyse la collection par défaut si définie
 resumeJobs();   // reprend l'affichage des jobs encore en cours après un rechargement de page
 </script>
 </body>
