@@ -6,6 +6,7 @@
 > add/apply/remove/update/reapply, dropzone, couverture de decks, jobs qui survivent à la
 > fermeture de l'onglet, import guidé d'une collection multi-dépôts, sync bidirectionnelle
 > jeu<->studio pour les decks, export de decks en pack partageable.
+> **P12 (collection par défaut) est PLANIFIÉ, pas encore implémenté** — voir sa section.
 >
 > Objectif : un utilisateur pointe une SOURCE (zip, dossier, URL) et le studio fait le
 > reste — analyse, normalisation, prévisualisation, application, mise à jour, restauration.
@@ -876,6 +877,107 @@ initial est l'extraction de `sync_with_store` en fonction pure partagée CLI/API
 logique inline dupliquée dans les deux, pour éviter deux implémentations d'un même algorithme
 de diff à maintenir en synchronisation).
 
+## Chantier P12 — Collection par défaut (🅿️ PLANIFIÉ — pas encore implémenté)
+
+Objectif : par défaut, les packs de thèmes/cartes alternatives que l'utilisateur héberge
+lui-même sur son GitHub (`~/optcgsim-repos`, produits par `repos build`/P10) doivent être
+**proposés à l'import** dans `studio ui`, sans avoir à recoller le chemin/l'URL du
+`collection.json` à chaque ouverture — c'est aujourd'hui le seul geste manuel qui reste après
+P10-c (« Importer une collection » marche, mais part d'un champ vide chaque fois).
+
+### Constat de départ (audité, pas supposé)
+
+- `~/optcgsim-repos/collection.json` existe déjà (généré par P10-b) et décrit 6 dépôts
+  personnels : `translated-fr-classic`, `translated-fr-fullart`, `translations-fr`,
+  `cardbacks`, `playmats`, `cards-alt` — chacun un sous-dossier avec son propre `.git`, poussé
+  en **privé** sur `github.com/hquezser/optcgsim-<famille>`.
+- **`~/optcgsim-repos` lui-même n'est PAS un dépôt git** (vérifié : pas de `.git` à la racine,
+  seuls les 6 sous-dossiers en ont) — `collection.json` n'est donc publié NULLE PART, il vit
+  uniquement en local sur cette machine. C'est cohérent avec la décision P10 déjà tranchée
+  (« pas de 7ᵉ dépôt » — voir « Décisions déjà tranchées ») : comme le studio et le jeu
+  tournent sur la MÊME machine que ces fichiers, un **chemin local** suffit, sans qu'il soit
+  nécessaire de le pousser sur GitHub ou dans un gist pour ce besoin précis.
+- `resolve_collection()`/`_fetch_text()` (P10-c) acceptent déjà indifféremment un chemin local
+  OU une URL http(s) (avec token si `github(usercontent).com`) — ce chantier n'ajoute AUCUNE
+  nouvelle logique de fetch/parsing, seulement la MÉMORISATION d'une source par défaut et son
+  auto-chargement au lieu d'un copier-coller manuel.
+- **Pré-requis à vérifier avant d'activer P12** (gap pré-existant, déjà documenté en P10,
+  hors périmètre de ce chantier) : `collection.json` actuel a ses 6 entrées en
+  `variant_group: null` (perdu — probablement réécrasé par un `repos update` depuis la
+  curation manuelle initiale). Il faudrait le recompléter à la main
+  (`translated-fr-classic`/`translated-fr-fullart` en `variant_group: "cards"`, les 4 autres
+  restent `null`) AVANT de s'appuyer dessus comme défaut, sinon la collection proposée montre
+  6 cases indépendantes au lieu de 2 alternatives (radio) + 4 compléments (case cochée).
+
+### Décisions de conception
+
+- **Où vit le réglage** : `studio/config.py`, même fichier que le token GitHub mais EN CLAIR
+  (`default_collection_source` n'est pas un secret — pas de `redact()`, renvoyé tel quel par
+  l'API, contrairement au token qui reste un booléen `github_token_set`).
+- **Auto-chargement, pas juste pré-remplissage** : à l'ouverture de `studio ui`, si une source
+  par défaut est configurée, la section « Importer une collection » s'auto-analyse (comme un
+  clic sur « Analyser » immédiat) — c'est ça, « proposé à l'import » : zéro clic pour VOIR les
+  packs, un clic pour les importer. L'import lui-même reste un geste explicite (« Importer la
+  sélection ») — garde-fou constant du projet : jamais d'application automatique en fond. Un
+  échec de fetch au chargement (fichier déplacé, dépôt renommé…) affiche un toast d'erreur
+  sans bloquer le reste de la page ; l'utilisateur peut toujours coller une autre source.
+- **Comment on définit le défaut** : pas un champ séparé caché dans les Réglages — un bouton
+  « Définir par défaut » à côté de « Analyser » (actif seulement après une analyse réussie),
+  qui persiste EXACTEMENT la source qui vient d'être analysée. La section « Réglages » (déjà
+  home du token GitHub) affiche la source actuelle en lecture + un bouton « Oublier ».
+- **CLI symétrique** (cohérence avec `config set-github-token`, déjà en place) : `studio
+  config set-default-collection [source]` (`nargs="?"`, vide = effacer).
+
+### Changements par fichier (à faire)
+
+1. `studio/config.py` : `default_collection_source() -> str | None` /
+   `set_default_collection_source(source: str | None) -> None`, même forme que
+   `github_token()`/`set_github_token()` mais sans redaction (valeur non secrète).
+2. `studio/api/server.py` :
+   - `get_config()` renvoie en plus `default_collection_source` (valeur brute, contrairement
+     au booléen du token).
+   - `set_config(...)`/extension de la route `/api/config` existante : body optionnel
+     `{github_token?, default_collection_source?}` — les deux clés indépendantes, `null`
+     efface chacune séparément (pas obligé de renvoyer les deux à chaque appel).
+3. `studio/api/static/index.html` :
+   - Au chargement de la page (à côté de `loadTokenState()`), nouvelle
+     `loadDefaultCollection()` : si `default_collection_source` est non vide, préremplit
+     `#collection-src` et appelle `analyseCollection()` immédiatement.
+   - Bouton « Définir par défaut » près de « Analyser » (visible après une analyse réussie)
+     → `POST /api/config {default_collection_source: source}` → toast.
+   - Dans « Réglages » : ligne « Collection par défaut : <source|aucune> » + bouton
+     « Oublier » (`POST /api/config {default_collection_source: null}`).
+4. `studio/cli.py` : `studio config set-default-collection [source]`
+   (`cmd_config_set_default_collection`), même sous-parseur `config` que
+   `set-github-token`.
+5. (Optionnel, petit confort) `cmd_repos_build` : si `--collection-label`/`--collection-group`
+   est utilisé et qu'aucune source par défaut n'est encore configurée, imprimer un rappel en
+   fin de run (`studio config set-default-collection <out_dir>/collection.json`) — ferme la
+   boucle « générer » (P10-b) -> « proposer par défaut » (ce chantier) sans coupler les deux
+   modules en code, juste un message.
+
+### Tests (à écrire)
+
+- `tests/test_config.py` (étendre, ou créer s'il n'existe pas encore un fichier dédié à
+  `Config`) : get/set/clear `default_collection_source`, cohabitation avec `github_token` dans
+  le même `config.json`.
+- `tests/test_api.py` : `GET /api/config` renvoie `default_collection_source` (`null` par
+  défaut) ; `POST /api/config {default_collection_source: "..."}` le persiste et le RENVOIE EN
+  CLAIR (contrairement au token) ; `null`/`""` l'efface ; les deux clés (`github_token`,
+  `default_collection_source`) restent indépendantes dans un même appel.
+- Test manuel (comme P10/P11) : `studio ui` avec `default_collection_source` réglé sur
+  `~/optcgsim-repos/collection.json` (DB sandboxée) → à l'ouverture de la page, la section
+  « Importer une collection » affiche déjà les 6 packs sans aucun clic.
+
+### Garde-fous inchangés
+
+L'auto-chargement ne fait que RÉSOUDRE/AFFICHER (identique à un clic manuel sur
+« Analyser ») — importer reste un clic explicite sur « Importer la sélection », exactement
+comme aujourd'hui. Aucune application automatique en fond.
+
+Effort estimé : ~¼-½ session (config + extension d'une route existante + petit JS ; tout le
+reste — fetch, parsing, rendu, import — existe déjà depuis P10-c).
+
 ## Garde-fous inchangés
 
 Le chemin d'écriture unique reste `_swap` (whitelist, magic-bytes+dimensions, atomique,
@@ -899,6 +1001,7 @@ annoncée), jamais automatiquement en arrière-plan hors `packs update`.
 | P9 | publier le format deckpack (spec + validate contributeur) | ~½ session | ✅ fait (repo optcgsim-deckpacks : spec+schema+exemple+validate CI ; studio: schema_version + validate-pack) |
 | P10 | collections de packs (import multi-dépôts guidé, variantes vs complémentaires) | ~1 session | ✅ fait (a→d, format+génération CLI+route API+UI+tests ; 211 tests verts) |
 | P11 | sync decks jeu -> studio, génération de deckpacks, provenance par deck | ~1 session | ✅ fait (scan+diff additif, `generate()`, routes+CLI+UI+tests ; 236 tests verts) |
+| P12 | collection par défaut (proposer ses propres packs GitHub sans copier-coller) | ~¼-½ session | 🅿️ planifié (voir chantier ci-dessus) |
 
 Décisions ouvertes historiques (résolues) :
 - `Custom Cards`/`Extra Alts` (Dropbox) : le rapport « non-classés » de P1 les révèle.
