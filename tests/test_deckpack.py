@@ -100,6 +100,35 @@ def test_current_schema_version_no_warning(tmp_path):
     assert rep.warnings == []
 
 
+def test_resolve_sets_source_to_pack_name_not_internal_file_or_url(tmp_path):
+    (tmp_path / "decks").mkdir()
+    (tmp_path / "decks" / "z.txt").write_text(VALID)
+    manifest = {"name": "Meta OP16", "decks": [
+        {"name": "Sanji", "text": VALID},
+        {"name": "Zoro", "file": "decks/z.txt"},
+        {"name": "Kid", "source_url": "https://site/kid"},
+    ]}
+    rep = deckpack.resolve(manifest, tmp_path,
+                          from_url=lambda url, name: importer.parse_text(VALID, name=name))
+    assert {d.deck.source for d in rep.imported} == {"deckpack:Meta OP16"}
+
+
+def test_generate_is_inverse_of_resolve(tmp_path):
+    manifest = {"name": "Meta OP16", "decks": [
+        {"name": "Sanji", "tags": ["meta", "op16"], "text": VALID}]}
+    rep = deckpack.resolve(manifest, tmp_path)
+    generated = deckpack.generate("Meta OP16", rep.imported, author="Trecore")
+    assert generated["name"] == "Meta OP16" and generated["author"] == "Trecore"
+    assert generated["schema_version"] == deckpack.SCHEMA_VERSION
+    assert generated["decks"] == [{"name": "Sanji", "tags": ["meta", "op16"],
+                                   "text": rep.imported[0].deck.to_native_text()}]
+    # round-trip : re-résoudre le pack généré reproduit le même deck/tags
+    rep2 = deckpack.resolve(generated, tmp_path)
+    assert rep2.imported[0].name == "Sanji" and rep2.imported[0].tags == ["meta", "op16"]
+    assert rep2.imported[0].deck.leader == rep.imported[0].deck.leader
+    assert rep2.imported[0].deck.cards == rep.imported[0].deck.cards
+
+
 def test_from_source_ingests_and_cleans(tmp_path):
     # ingest factice : renvoie un dossier contenant un deckpack.json
     content = tmp_path / "content"

@@ -395,8 +395,44 @@ def cmd_decks_list(args) -> int:
     with LocalStore(Path(args.db)) as store:
         for d in store.list("decks"):
             tags = ",".join(d["tags"]) or "-"
-            print(f"{d['name']:<28} {d['leader']:<12} tags:{tags:<20} "
+            print(f"{d['id']}  {d['name']:<28} {d['leader']:<12} tags:{tags:<20} "
                   f"({'dirty' if d['dirty'] else 'synced'})")
+    return 0
+
+
+def cmd_decks_sync_from_sim(args) -> int:
+    """Importe les decks fabriqués DIRECTEMENT en jeu — purement additif, jamais de
+    suppression (un deck disparu du dossier persistant est seulement signalé)."""
+    inst = _install(args)
+    with LocalStore(Path(args.db)) as store:
+        r = importer.sync_with_store(inst.persistent, store)
+    print(f"{len(r['new'])} nouveau(x), {len(r['updated'])} mis à jour, "
+          f"{len(r['orphaned'])} introuvable(s) en jeu (gardé(s) en base)")
+    for name in r["new"]:
+        print(f"  + {name}")
+    for name in r["updated"]:
+        print(f"  ~ {name}")
+    for name in r["orphaned"]:
+        print(f"  ? {name} (plus dans le dossier du sim, gardé en base)")
+    return 0
+
+
+def cmd_decks_export_pack(args) -> int:
+    """Empaquette des decks déjà en base en un deckpack.json (P6) — inverse de import-pack."""
+    from .decks import deckpack
+    ids = [s.strip() for s in args.ids.split(",") if s.strip()]
+    with LocalStore(Path(args.db)) as store:
+        resolved = []
+        for deck_id in ids:
+            row = store.get("decks", deck_id)
+            if row is None or row.get("deleted"):
+                raise SystemExit(f"deck introuvable : {deck_id} (voir `studio decks list`)")
+            deck = importer.Decklist(leader=row["leader"], cards=row["cards"], name=row["name"])
+            resolved.append(deckpack.ResolvedDeck(name=row["name"], tags=row.get("tags") or [],
+                                                  deck=deck))
+    pack = deckpack.generate(args.name, resolved, author=args.author)
+    Path(args.out).write_text(json.dumps(pack, indent=2, ensure_ascii=False))
+    print(f"« {args.name} » : {len(resolved)} deck(s) -> {args.out}")
     return 0
 
 
@@ -599,6 +635,21 @@ def build_parser() -> argparse.ArgumentParser:
     di.add_argument("--tags", default=None, help="tags séparés par des virgules")
     di.set_defaults(func=cmd_decks_import)
     sd.add_parser("list").set_defaults(func=cmd_decks_list)
+
+    dsy = sd.add_parser("sync-from-sim",
+                        help="importer les decks créés directement en jeu (additif, jamais "
+                             "de suppression)")
+    dsy.set_defaults(func=cmd_decks_sync_from_sim)
+
+    dep = sd.add_parser("export-pack",
+                        help="empaqueter des decks déjà en base en deckpack.json (partage)")
+    dep.add_argument("--ids", required=True,
+                     help="ids de deck séparés par des virgules (voir `decks list`)")
+    dep.add_argument("--name", required=True)
+    dep.add_argument("--author", default=None)
+    dep.add_argument("--out", required=True, help="chemin de sortie du deckpack.json")
+    dep.set_defaults(func=cmd_decks_export_pack)
+
     dip = sd.add_parser("import-pack",
                         help="importer une collection de decks (deckpack.json : dossier/zip/URL)")
     dip.add_argument("source", help="dossier, .zip ou URL contenant un deckpack.json")

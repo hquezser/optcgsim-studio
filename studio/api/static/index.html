@@ -176,11 +176,15 @@
 
   <section>
     <h2>Mes decks</h2>
+    <div class="row" style="margin-bottom:10px">
+      <button class="ghost" onclick="syncFromSim()">Synchroniser depuis le jeu</button>
+    </div>
     <div id="decks-bulk" class="row" style="display:none;align-items:center;gap:10px">
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
         <input type="checkbox" id="decks-select-all" onchange="toggleAllDecks(this.checked)"
                style="width:auto"> tout sélectionner</label>
       <button class="mini ghost" onclick="removeSelectedDecks()">Retirer la sélection</button>
+      <button class="mini ghost" onclick="exportDeckPack()">Générer un deckpack…</button>
     </div>
     <div id="decks"><div class="empty">Aucun deck importé.</div></div>
   </section>
@@ -271,6 +275,14 @@ async function removeSelectedPacks(){
   loadStatus(); loadPacks();
 }
 
+function deckBadge(source){
+  if(!source || source === 'ui' || source === 'clipboard') return '';
+  if(source === 'sim') return `<span class="tag">jeu</span>`;
+  if(source.startsWith('deckpack:')) return `<span class="tag">pack : ${source.slice(9)}</span>`;
+  if(/^https?:\/\//.test(source)) return `<span class="tag">lien</span>`;
+  return '';
+}
+
 async function loadDecks(){
   const decks = await api('/decks');
   const el = $('#decks');
@@ -286,9 +298,39 @@ async function loadDecks(){
       <input type="checkbox" class="deck-select" value="${d.id}" style="width:auto">
       <span class="l">${d.name}</span>
       <span class="adv">${d.leader} · ${n} cartes${d.tags.length?' · '+d.tags.join(', '):''}</span>
+      ${deckBadge(d.source)}
       <button class="mini ghost" style="margin-left:auto" onclick="removeDeck('${d.id}')">Retirer</button>
     </div>`;
   }).join('');
+}
+
+async function syncFromSim(){
+  try{
+    const r = await api('/decks/sync-from-sim', {method:'POST'});
+    let m = `${r.new.length} nouveau(x), ${r.updated.length} mis à jour`;
+    if(r.orphaned.length) m += `, ${r.orphaned.length} introuvable(s) en jeu (gardé(s) en base)`;
+    toast(m+'.');
+    loadDecks();
+  }catch(e){ toast(e.message, 1); }
+}
+
+async function exportDeckPack(){
+  const ids = [...document.querySelectorAll('.deck-select:checked')].map(c => c.value);
+  if(!ids.length) return toast('Sélectionne au moins un deck', 1);
+  const name = prompt('Nom du deckpack :');
+  if(!name) return;
+  const author = prompt('Auteur (optionnel) :') || null;
+  try{
+    const pack = await api('/deckpacks/export', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids, name, author})});
+    const blob = new Blob([JSON.stringify(pack, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${name.replace(/[^\w \-']/g,'_')}.deckpack.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast(`« ${name} » : deckpack généré (${pack.decks.length} deck(s)).`);
+  }catch(e){ toast(e.message, 1); }
 }
 
 function toggleAllDecks(checked){

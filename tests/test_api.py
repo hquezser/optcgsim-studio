@@ -81,6 +81,11 @@ def test_import_deck_writes_sim_and_db(svc):
     assert svc.decks()[0]["name"] == "D"
 
 
+def test_decks_include_source_field(svc):
+    svc.import_deck(text=_DECK50, name="D")
+    assert svc.decks()[0]["source"] == "ui"
+
+
 # ------------------------------------------------------------------ retrait de deck
 def test_remove_deck_deletes_db_record_and_sim_file(svc):
     r = svc.import_deck(text=_DECK50, name="ARetirer")
@@ -144,6 +149,84 @@ def test_validate_deckpack_is_dry_run(svc, tmp_path):
     assert r["warnings"]                                   # version future signalée
     # dry-run : RIEN persisté
     assert "Ok" not in {d["name"] for d in svc.decks()}
+
+
+# ------------------------------------------------------------------ sync jeu -> studio
+def test_sync_from_sim_imports_new_deck_written_directly_in_game(svc):
+    (svc.install.persistent / "FaitEnJeu.txt").write_text(_DECK50)
+    r = svc.sync_from_sim()
+    assert r == {"new": ["FaitEnJeu"], "updated": [], "orphaned": []}
+    row = svc.decks()[0]
+    assert row["name"] == "FaitEnJeu" and row["source"] == "sim"
+
+
+def test_sync_from_sim_preserves_tags_on_update(svc):
+    (svc.install.persistent / "FaitEnJeu.txt").write_text(_DECK50)
+    svc.sync_from_sim()
+    deck_id = svc.decks()[0]["id"]
+    with svc._store() as store:
+        store.put("decks", {**store.get("decks", deck_id), "tags": ["gardé"]})
+    changed = ("1xOP02-001\n" + "\n".join(f"4xCC{i:02d}-001" for i in range(12))
+              + "\n2xDD01-001")
+    (svc.install.persistent / "FaitEnJeu.txt").write_text(changed)
+    r = svc.sync_from_sim()
+    assert r == {"new": [], "updated": ["FaitEnJeu"], "orphaned": []}
+    row = svc.decks()[0]
+    assert row["leader"] == "OP02-001" and row["tags"] == ["gardé"]
+
+
+def test_sync_from_sim_reports_orphan_without_deleting(svc):
+    (svc.install.persistent / "FaitEnJeu.txt").write_text(_DECK50)
+    svc.sync_from_sim()
+    (svc.install.persistent / "FaitEnJeu.txt").unlink()
+    r = svc.sync_from_sim()
+    assert r == {"new": [], "updated": [], "orphaned": ["FaitEnJeu"]}
+    assert len(svc.decks()) == 1
+
+
+def test_http_sync_from_sim(server, svc):
+    (svc.install.persistent / "FaitEnJeu.txt").write_text(_DECK50)
+    code, r = _post(server, "/api/decks/sync-from-sim", {})
+    assert code == 200 and r["new"] == ["FaitEnJeu"]
+
+
+# ------------------------------------------------------------------ génération de deckpack
+def test_export_deckpack_round_trips_selected_decks(svc):
+    from studio.decks.importer import parse_text
+    svc.import_deck(text=_DECK50, name="Aggro", tags=["meta"])
+    deck_id = svc.decks()[0]["id"]
+    pack = svc.export_deckpack([deck_id], "Mon pack", author="Moi")
+    assert pack["name"] == "Mon pack" and pack["author"] == "Moi"
+    assert pack["schema_version"] == 1
+    assert len(pack["decks"]) == 1
+    d = pack["decks"][0]
+    assert d["name"] == "Aggro" and d["tags"] == ["meta"]
+    reparsed = parse_text(d["text"])
+    assert reparsed.leader == "OP01-060" and reparsed.total == 50
+
+
+def test_export_deckpack_unknown_id_raises_keyerror(svc):
+    with pytest.raises(KeyError):
+        svc.export_deckpack(["inconnu"], "P")
+
+
+def test_http_export_deckpack(server, svc):
+    svc.import_deck(text=_DECK50, name="Aggro")
+    deck_id = svc.decks()[0]["id"]
+    code, r = _post(server, "/api/deckpacks/export", {"ids": [deck_id], "name": "P"})
+    assert code == 200 and r["decks"][0]["name"] == "Aggro"
+
+
+def test_http_export_deckpack_unknown_id_is_404(server):
+    req = urllib.request.Request(
+        server + "/api/deckpacks/export",
+        data=json.dumps({"ids": ["inconnu"], "name": "P"}).encode(), method="POST",
+        headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req)
+        assert False, "aurait dû lever 404"
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
 
 
 def test_http_deckpack_is_job_based(server, svc, tmp_path):

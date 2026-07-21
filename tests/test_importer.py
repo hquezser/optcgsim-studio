@@ -2,7 +2,9 @@
 
 import pytest
 
-from studio.decks.importer import Decklist, ImportError_, parse_html, parse_text
+from studio.decks.importer import (Decklist, ImportError_, parse_html, parse_text,
+                                   scan_persistent_decks, sync_with_store)
+from studio.storage.local import LocalStore
 
 # Copie d'une decklist RÉELLE du sim (0Sanji P6K.txt) : 1 leader + 50 cartes.
 NATIVE = """1xPRB01-001
@@ -117,3 +119,88 @@ def test_save_to_sim_idempotent_but_no_clobber(tmp_path):
                      cards={f"AA{i:02d}-001": 4 for i in range(12)} | {"BB01-001": 2})
     with pytest.raises(ImportError_, match="existe déjà"):
         other.save_to_sim("Import Test", tmp_path)     # contenu différent : refus
+
+
+# ------------------------------------------------------------------ scan du dossier persistant
+def test_scan_persistent_decks_finds_valid_txt(tmp_path):
+    (tmp_path / "MonDeck.txt").write_text(NATIVE)
+    found = scan_persistent_decks(tmp_path)
+    assert len(found) == 1
+    assert found[0].name == "MonDeck" and found[0].source == "sim" and found[0].total == 50
+
+
+def test_scan_persistent_decks_ignores_non_deck_txt(tmp_path):
+    (tmp_path / "MonDeck.txt").write_text(NATIVE)
+    (tmp_path / "readme.txt").write_text("pas une decklist, juste du texte\n")
+    found = scan_persistent_decks(tmp_path)
+    assert [d.name for d in found] == ["MonDeck"]
+
+
+def test_scan_persistent_decks_ignores_subdirectories(tmp_path):
+    (tmp_path / "MonDeck.txt").write_text(NATIVE)
+    versioned = tmp_path / "1.2.3" / "Cards"
+    versioned.mkdir(parents=True)
+    (versioned / "cache.txt").write_text(NATIVE)      # même contenu, mais sous-dossier
+    found = scan_persistent_decks(tmp_path)
+    assert [d.name for d in found] == ["MonDeck"]
+
+
+def test_scan_persistent_decks_missing_dir_returns_empty(tmp_path):
+    assert scan_persistent_decks(tmp_path / "nope") == []
+
+
+# ------------------------------------------------------------------ sync jeu -> studio
+@pytest.fixture()
+def store(tmp_path):
+    with LocalStore(tmp_path / "studio.db") as s:
+        yield s
+
+
+def test_sync_new_deck_persisted_with_source_sim(tmp_path, store):
+    (tmp_path / "DuJeu.txt").write_text(NATIVE)
+    r = sync_with_store(tmp_path, store)
+    assert r == {"new": ["DuJeu"], "updated": [], "orphaned": []}
+    row = store.list("decks")[0]
+    assert row["name"] == "DuJeu" and row["source"] == "sim" and row["leader"] == "PRB01-001"
+
+
+def test_sync_is_additive_second_run_idempotent(tmp_path, store):
+    (tmp_path / "DuJeu.txt").write_text(NATIVE)
+    sync_with_store(tmp_path, store)
+    r = sync_with_store(tmp_path, store)
+    assert r == {"new": [], "updated": [], "orphaned": []}
+    assert len(store.list("decks")) == 1
+
+
+def test_sync_updates_changed_deck_preserving_tags(tmp_path, store):
+    (tmp_path / "DuJeu.txt").write_text(NATIVE)
+    sync_with_store(tmp_path, store)
+    row = store.list("decks")[0]
+    store.put("decks", {**row, "tags": ["mon-tag"]})   # tag posé côté studio
+    # le deck a changé EN JEU (nouveau leader/cartes, mais on garde le même fichier .txt)
+    changed = Decklist(leader="OP01-060",
+                       cards={f"AA{i:02d}-001": 4 for i in range(12)} | {"BB01-001": 2})
+    (tmp_path / "DuJeu.txt").write_text(changed.to_native_text())
+    r = sync_with_store(tmp_path, store)
+    assert r == {"new": [], "updated": ["DuJeu"], "orphaned": []}
+    updated_row = store.get("decks", row["id"])
+    assert updated_row["leader"] == "OP01-060" and updated_row["tags"] == ["mon-tag"]
+
+
+def test_sync_orphaned_deck_reported_not_deleted(tmp_path, store):
+    (tmp_path / "DuJeu.txt").write_text(NATIVE)
+    sync_with_store(tmp_path, store)
+    (tmp_path / "DuJeu.txt").unlink()                 # supprimé côté jeu
+    r = sync_with_store(tmp_path, store)
+    assert r == {"new": [], "updated": [], "orphaned": ["DuJeu"]}
+    assert len(store.list("decks")) == 1               # jamais supprimé en base
+
+
+def test_sync_ignores_orphans_not_sourced_from_sim(tmp_path, store):
+    profiles = store.list("profiles")
+    prof = profiles[0] if profiles else store.put("profiles", {"name": "default", "prefs": {}})
+    store.put("decks", {"profile_id": prof["id"], "name": "ImporteAilleurs",
+                        "leader": "OP01-060", "cards": {"AA00-001": 4}, "tags": [],
+                        "source": "ui"})
+    r = sync_with_store(tmp_path, store)
+    assert r == {"new": [], "updated": [], "orphaned": []}     # pas un deck "sim" -> pas signalé

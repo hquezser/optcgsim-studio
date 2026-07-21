@@ -13,9 +13,11 @@ Endpoints (préfixe /api) :
     POST /packs/<name>/remove
     POST /packs/update {name?}      /  POST /packs/reapply
     GET  /packs/<name>/coverage     -> couverture par deck (le crochet d'adoption)
-    GET  /decks                     -> decks en base
+    GET  /decks                     -> decks en base (avec provenance : source)
     POST /decks/import {text?|url?, name?, tags?}
     POST /decks/<id>/remove         -> tombstone en base + supprime le .txt du sim (si intact)
+    POST /decks/sync-from-sim       -> importe les decks faits EN JEU (additif, jamais de suppression)
+    POST /deckpacks/export {ids, name, author?} -> génère un deckpack.json à partir de decks en base
     POST /collections/resolve {source} -> résout un collection.json (P10-c) sans rien importer
 
 Écriture (apply/remove) : passe par AssetManager -> mêmes garde-fous (backup, atomique,
@@ -103,7 +105,7 @@ class StudioService:
     def decks(self) -> list[dict]:
         with self._store() as store:
             return [{"id": d["id"], "name": d["name"], "leader": d["leader"],
-                     "cards": d["cards"], "tags": d["tags"]}
+                     "cards": d["cards"], "tags": d["tags"], "source": d.get("source")}
                     for d in store.list("decks")]
 
     def coverage(self, name: str) -> dict:
@@ -334,6 +336,31 @@ class StudioService:
                 removed_file = True
         return {"name": d["name"], "removed_file": removed_file}
 
+    def sync_from_sim(self) -> dict:
+        """Importe les decks fabriqués DIRECTEMENT en jeu (invisibles jusqu'ici pour le
+        studio) : diffe le dossier persistant contre la base via `importer.sync_with_store`
+        — purement additif, jamais de suppression (voir sa docstring pour le détail)."""
+        with self._store() as store:
+            return importer.sync_with_store(self.install.persistent, store)
+
+    def export_deckpack(self, deck_ids: list[str], name: str,
+                        author: str | None = None) -> dict:
+        """Empaquette des decks déjà en base en un `deckpack.json` (P6) — inverse direct de
+        `import_deckpack` : reconstruit des `ResolvedDeck` depuis la base, puis
+        `deckpack.generate()` (aucune nouvelle sérialisation)."""
+        from ..decks import deckpack
+        with self._store() as store:
+            resolved = []
+            for deck_id in deck_ids:
+                row = store.get("decks", deck_id)
+                if row is None or row.get("deleted"):
+                    raise KeyError(deck_id)
+                deck = importer.Decklist(leader=row["leader"], cards=row["cards"],
+                                         name=row["name"])
+                resolved.append(deckpack.ResolvedDeck(name=row["name"],
+                                                       tags=row.get("tags") or [], deck=deck))
+        return deckpack.generate(name, resolved, author=author)
+
     def import_deckpack(self, source: str, on_progress=None) -> dict:
         """Importe un pack de decks (deckpack.json) : résout tous les decks puis persiste
         ceux qui réussissent (un échec n'empêche pas les autres). Job de fond."""
@@ -497,12 +524,18 @@ def make_handler(svc: StudioService):
                 m = re.match(r"^/api/decks/([^/]+)/remove$", path)
                 if m:
                     return self._send(200, svc.remove_deck(_dec(m.group(1))))
+                if path == "/api/decks/sync-from-sim":
+                    return self._send(200, svc.sync_from_sim())
                 if path == "/api/deckpacks/validate":
                     b = self._body_json()
                     return self._send(200, svc.validate_deckpack(b["source"]))
                 if path == "/api/deckpacks/add":
                     b = self._body_json()
                     return self._send(202, {"job_id": svc.start_deckpack_job(b["source"])})
+                if path == "/api/deckpacks/export":
+                    b = self._body_json()
+                    return self._send(200, svc.export_deckpack(
+                        b["ids"], b["name"], b.get("author")))
                 if path == "/api/collections/resolve":
                     b = self._body_json()
                     return self._send(200, svc.resolve_collection(b["source"]))

@@ -114,6 +114,9 @@ def resolve(manifest: dict, pack_dir: Path,
                 deck = from_url(entry["source_url"], name)
             else:
                 raise DeckPackError("ni `text`, ni `file`, ni `source_url`")
+            # Provenance = le PACK, pas le fichier/l'URL interne (remplace la valeur posée par
+            # parse_text/from_url) — pour pouvoir répondre à « importé depuis quel pack ? ».
+            deck.source = f"deckpack:{rep.name}"
             # nom unique dans le pack (évite d'écraser deux decks homonymes)
             uniq, n = name, 2
             while uniq in seen_names:
@@ -123,6 +126,18 @@ def resolve(manifest: dict, pack_dir: Path,
         except (importer.ImportError_, DeckPackError, OSError) as e:
             rep.failed.append({"name": name, "reason": str(e)})
     return rep
+
+
+def generate(name: str, decks: list[ResolvedDeck], author: str | None = None) -> dict:
+    """Construit un `deckpack.json` (P6) à partir de decks déjà résolus — inverse exact de
+    `resolve()` : réutilise `Decklist.to_native_text()`, aucune nouvelle sérialisation."""
+    return {
+        "name": name,
+        "author": author,
+        "schema_version": SCHEMA_VERSION,
+        "decks": [{"name": rd.name, "tags": rd.tags, "text": rd.deck.to_native_text()}
+                  for rd in decks],
+    }
 
 
 def from_source(source: str | Path, ingest, work_dir: Path,

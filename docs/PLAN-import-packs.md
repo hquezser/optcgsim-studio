@@ -1,11 +1,11 @@
 # PLAN — Import ergonomique de packs communautaires (cartes + customs)
 
-> **AVANCEMENT (2026-07-19)** — P0→P10 tous FAITS (voir tableau « Ordre et effort » en fin de
-> plan). Dernier en date : P10 (collections de packs — variantes vs compléments) complet,
-> (c)+(d) (route `POST /api/collections/resolve` + section UI « Importer une collection » +
-> tests) ajoutés à la suite de (a)+(b) déjà en place. 211 tests verts. `studio ui` fonctionne
-> de bout en bout : add/apply/remove/update/reapply, dropzone, couverture de decks, jobs qui
-> survivent à la fermeture de l'onglet, import guidé d'une collection multi-dépôts.
+> **AVANCEMENT (2026-07-21)** — P0→P11 tous FAITS (voir tableau « Ordre et effort » en fin de
+> plan). Dernier en date : P11 (sync decks jeu -> studio, génération de deckpacks depuis la
+> base, provenance par deck). 236 tests verts. `studio ui` fonctionne de bout en bout :
+> add/apply/remove/update/reapply, dropzone, couverture de decks, jobs qui survivent à la
+> fermeture de l'onglet, import guidé d'une collection multi-dépôts, sync bidirectionnelle
+> jeu<->studio pour les decks, export de decks en pack partageable.
 >
 > Objectif : un utilisateur pointe une SOURCE (zip, dossier, URL) et le studio fait le
 > reste — analyse, normalisation, prévisualisation, application, mise à jour, restauration.
@@ -812,6 +812,70 @@ main (labels + `variant_group`) avant de le republier — exactement comme pour 
 Effort restant estimé : ~½ session (route de résolution + UI radio/checkbox + enchaînement de
 jobs déjà existants — le format et sa génération, la partie la plus incertaine, sont FAITS).
 
+## Chantier P11 — Sync decks simulateur → studio + génération de deckpacks + provenance
+
+Objectif : trois besoins liés par une seule extension du modèle existant (2026-07-21) —
+(1) voir dans le studio les decks fabriqués DIRECTEMENT en jeu (jusqu'ici invisibles), (2)
+empaqueter des decks déjà en base en `deckpack.json` partageable (P6 n'était consommé qu'en
+lecture), (3) savoir, pour un deck importé via un pack, DE QUEL pack il vient (le champ
+`source` existait déjà en base mais était filtré par l'API, et capturait le fichier/l'URL
+interne au pack plutôt que le pack lui-même).
+
+1. **`studio/decks/importer.py`** :
+   - `scan_persistent_decks(persistent_dir)` : parcourt les `.txt` à la RACINE du dossier
+     persistant (non récursif — ignore les caches versionnés `<version>/Cards/`), parse
+     chacun (`source="sim"`), ignore silencieusement ce qui n'est pas une decklist valide.
+   - `sync_with_store(persistent_dir, store)` : diffe le scan contre les decks en base —
+     TOUJOURS additif, jamais de suppression (même garde-fou constant que `repos update`) :
+     absent en base -> nouveau (`source="sim"`) ; présent mais contenu natif différent ->
+     mis à jour (`leader`/`cards` seulement, `tags`/`id`/`profile_id` préservés) ; en base
+     avec `source="sim"` mais absent du scan -> orphelin (signalé, jamais supprimé). Extrait
+     en fonction pure (plutôt que dupliqué dans l'API et la CLI, comme le suggérait le plan
+     initial) car c'est un algorithme de diff, pas un simple appel de persistance — un seul
+     endroit à tenir cohérent, appelé par `StudioService.sync_from_sim()` ET
+     `cmd_decks_sync_from_sim` (cli.py).
+2. **`studio/decks/deckpack.py`** :
+   - `resolve()` : `deck.source = f"deckpack:{rep.name}"` posé sur CHAQUE entrée (texte,
+     fichier, URL confondus) juste avant `rep.imported.append(...)` — remplace la valeur
+     posée par `parse_text`/`from_url` (qui capturait le fichier/l'URL interne au pack).
+   - `generate(name, decks, author=None) -> dict` : inverse exact de `resolve()`, réutilise
+     `Decklist.to_native_text()` — aucune nouvelle sérialisation.
+3. **`studio/api/server.py`** : `decks()` renvoie désormais `source` (retiré par erreur
+   auparavant) ; `sync_from_sim()` délègue à `importer.sync_with_store` ; `export_deckpack
+   (deck_ids, name, author=None)` reconstruit des `ResolvedDeck` depuis la base puis appelle
+   `deckpack.generate()` (id de deck inconnu -> `KeyError` -> 404, cohérent avec
+   `remove_deck`). Routes `POST /decks/sync-from-sim` et `POST /deckpacks/export`.
+4. **`studio/api/static/index.html`** : bouton « Synchroniser depuis le jeu » (toast
+   new/updated/orphaned) ; badge de provenance par deck (`deckBadge()` : « jeu » / « pack :
+   <nom> » / « lien » ; rien pour `ui`/`clipboard`) ; bouton « Générer un deckpack… » dans la
+   barre de sélection groupée des decks — `prompt()` nom/auteur (cohérent avec l'UX simple du
+   reste du projet, pas de framework de modal), téléchargement via `Blob`+lien `download`
+   (aucune dépendance nouvelle).
+5. **`studio/cli.py`** : `studio decks sync-from-sim` (même résumé new/updated/orphaned) et
+   `studio decks export-pack --ids <id,id,...> --name NAME [--author A] --out chemin.json`.
+   `decks list` affiche désormais l'id complet de chaque deck (nécessaire pour `--ids`, absent
+   jusqu'ici).
+6. Tests : `tests/test_importer.py` (scan + sync, 8 cas — nouveau/idempotent/mise à jour avec
+   tags préservés/orphelin non supprimé/orphelin ignoré si pas `source="sim"`),
+   `tests/test_deckpack.py` (provenance = nom du pack sur texte/fichier/URL confondus ;
+   `generate()` round-trip avec `resolve()`), `tests/test_api.py` (service + HTTP pour
+   `sync_from_sim`/`export_deckpack`, `decks()` renvoie `source`). Suite à 236 verts (was 216).
+7. Vérifié en direct : sandbox jetable (chrome-devtools MCP) — un deck `source="ui"` sans
+   badge, un `.txt` déposé directement dans le dossier persistant -> « Synchroniser depuis le
+   jeu » le fait apparaître avec le badge « jeu » (toast « 1 nouveau(x), 0 mis à jour ») ;
+   sélection des 2 decks -> « Générer un deckpack… » -> deckpack téléchargé (toast « 2
+   deck(s) »). Vérifié aussi contre l'installation RÉELLE (`~/Library/Application
+   Support/com.Batsu.OPTCGSim`, DB sandboxée) : les 19 vrais decks de l'utilisateur sont
+   importés en lecture seule (aucun `.txt` modifié, mtimes inchangés) ; export d'un vrai deck
+   (« Sanji P6K ») puis re-validation du deckpack généré via `/api/deckpacks/validate` ->
+   round-trip exact (mêmes leader/cartes/50 cartes). Un deck décoy ajouté pour le test a été
+   retiré proprement après coup (DB + fichier) — aucune donnée réelle laissée derrière.
+
+Effort réel : ~1 session (conforme à l'estimation ; la seule déviation par rapport au plan
+initial est l'extraction de `sync_with_store` en fonction pure partagée CLI/API plutôt que la
+logique inline dupliquée dans les deux, pour éviter deux implémentations d'un même algorithme
+de diff à maintenir en synchronisation).
+
 ## Garde-fous inchangés
 
 Le chemin d'écriture unique reste `_swap` (whitelist, magic-bytes+dimensions, atomique,
@@ -834,6 +898,7 @@ annoncée), jamais automatiquement en arrière-plan hors `packs update`.
 | P8 | dépôt(s) privé(s) + import granulaire par type de carte | ~½ session | ✅ fait (card_types, --only-type, DON, UI par type ; multi-dépôts documenté) |
 | P9 | publier le format deckpack (spec + validate contributeur) | ~½ session | ✅ fait (repo optcgsim-deckpacks : spec+schema+exemple+validate CI ; studio: schema_version + validate-pack) |
 | P10 | collections de packs (import multi-dépôts guidé, variantes vs complémentaires) | ~1 session | ✅ fait (a→d, format+génération CLI+route API+UI+tests ; 211 tests verts) |
+| P11 | sync decks jeu -> studio, génération de deckpacks, provenance par deck | ~1 session | ✅ fait (scan+diff additif, `generate()`, routes+CLI+UI+tests ; 236 tests verts) |
 
 Décisions ouvertes historiques (résolues) :
 - `Custom Cards`/`Extra Alts` (Dropbox) : le rapport « non-classés » de P1 les révèle.

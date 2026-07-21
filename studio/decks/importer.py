@@ -96,6 +96,60 @@ def deck_txt_path(name: str, persistent_dir: Path) -> Path:
     return Path(persistent_dir) / f"{safe}.txt"
 
 
+def scan_persistent_decks(persistent_dir: Path) -> list[Decklist]:
+    """Scanne les `.txt` à la RACINE du dossier persistant (non récursif — ignore les caches
+    versionnés `<version>/Cards/`) et les parse en `Decklist` (`source="sim"`).
+
+    Un `.txt` qui n'est pas une decklist valide (log, fichier tiers) est ignoré silencieusement
+    plutôt que de faire échouer tout le scan — même principe que les entrées en échec de
+    `deckpack.resolve()`."""
+    persistent_dir = Path(persistent_dir)
+    if not persistent_dir.exists():
+        return []
+    out = []
+    for p in sorted(persistent_dir.glob("*.txt")):
+        try:
+            out.append(parse_text(p.read_text(errors="ignore"), name=p.stem, source="sim"))
+        except ImportError_:
+            continue
+    return out
+
+
+def sync_with_store(persistent_dir: Path, store) -> dict:
+    """Concilie les `.txt` du dossier persistant (`scan_persistent_decks`) avec les decks en
+    base (`store`, protocole SyncStore) — TOUJOURS additif, jamais de suppression :
+
+      - absent en base                            -> nouveau (persisté, `source="sim"`)
+      - présent, contenu natif différent           -> mis à jour (`leader`/`cards` seulement ;
+                                                       `tags`/`id`/`profile_id` préservés)
+      - en base avec `source="sim"`, absent du scan -> orphelin (signalé seulement)
+
+    Factorisé ici (plutôt que dupliqué dans l'API et la CLI) car c'est plus qu'un simple
+    appel de persistance : c'est un algorithme de diff à tenir cohérent aux deux endroits.
+    Renvoie `{"new": [...], "updated": [...], "orphaned": [...]}` (noms de decks)."""
+    found = {d.name: d for d in scan_persistent_decks(persistent_dir)}
+    rows = store.list("decks")
+    by_name = {r["name"]: r for r in rows}
+    profiles = store.list("profiles")
+    prof = profiles[0] if profiles else store.put("profiles", {"name": "default", "prefs": {}})
+    new, updated = [], []
+    for name, deck in found.items():
+        row = by_name.get(name)
+        if row is None:
+            store.put("decks", {"profile_id": prof["id"], "name": name,
+                                "leader": deck.leader, "cards": deck.cards,
+                                "tags": [], "source": deck.source})
+            new.append(name)
+        else:
+            expected = Decklist(leader=row["leader"], cards=row["cards"]).to_native_text()
+            if deck.to_native_text() != expected:
+                store.put("decks", {**row, "leader": deck.leader, "cards": deck.cards})
+                updated.append(name)
+    orphaned = [r["name"] for r in rows
+               if r["name"] not in found and r.get("source") == "sim"]
+    return {"new": new, "updated": updated, "orphaned": orphaned}
+
+
 # --------------------------------------------------------------------------- parsing texte
 # Chaque motif capture (qty, id) ou (id, qty). Ordre = du plus strict au plus permissif.
 _LINE_PATTERNS: list[tuple[re.Pattern, tuple[int, int]]] = [
