@@ -1,4 +1,4 @@
-"""Configuration locale du studio — notamment le token GitHub (P7).
+"""Configuration locale du studio — le token GitHub (P7) et la collection par défaut (P12).
 
 Le token GitHub (Personal Access Token) sert à explorer/télécharger sélectivement un dépôt
 PRIVÉ (voir sourcefetch). C'est un SECRET : traité comme un mot de passe.
@@ -7,6 +7,10 @@ PRIVÉ (voir sourcefetch). C'est un SECRET : traité comme un mot de passe.
   - JAMAIS renvoyé en clair par l'API (le serveur n'expose qu'un booléen « configuré ») ;
   - JAMAIS loggé ni inclus dans un rapport de job — voir redact() pour les messages d'erreur
     qui pourraient contenir une URL authentifiée ou le token lui-même.
+
+`default_collection_source` (P12) N'est PAS un secret — un chemin local ou une URL de
+`collection.json` (P10) à auto-analyser à l'ouverture de `studio ui`, pour proposer ses
+propres packs sans avoir à recoller la source à chaque fois. Renvoyée en clair par l'API.
 """
 
 from __future__ import annotations
@@ -59,6 +63,21 @@ class Config:
 
     def has_github_token(self) -> bool:
         return self.github_token() is not None
+
+    # ------------------------------------------------------------ collection par défaut (P12)
+    def default_collection_source(self) -> str | None:
+        """Source (chemin local ou URL) d'un `collection.json` (P10) à auto-analyser à
+        l'ouverture de `studio ui` — PAS un secret, renvoyée en clair (contrairement au token)."""
+        src = self._read().get("default_collection_source")
+        return src.strip() if isinstance(src, str) and src.strip() else None
+
+    def set_default_collection_source(self, source: str | None) -> None:
+        data = self._read()
+        if source and source.strip():
+            data["default_collection_source"] = source.strip()
+        else:
+            data.pop("default_collection_source", None)     # None/"" -> efface
+        self._write(data)
 
 
 def redact(text: str, token: str | None) -> str:
