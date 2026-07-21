@@ -153,6 +153,18 @@ def cmd_config_set_token(args) -> int:
     return 0
 
 
+def cmd_config_set_default_collection(args) -> int:
+    """Source (chemin local ou URL) d'un collection.json (P10) à auto-analyser à l'ouverture
+    de `studio ui` — permet de proposer ses propres packs GitHub sans les recoller à chaque
+    fois (P12). Vide = effacer."""
+    from .config import Config
+    cfg = Config()
+    cfg.set_default_collection_source(args.source or None)
+    src = cfg.default_collection_source()
+    print(f"Collection par défaut : {src}" if src else "Collection par défaut effacée.")
+    return 0
+
+
 def cmd_packs_add(args) -> int:
     from .config import Config
     inst = _install(args)
@@ -527,6 +539,10 @@ def cmd_repos_build(args) -> int:
          "écrasent les MÊMES fichiers cibles (ex. alt-arts anglais ET traduction FR) doivent "
          "partager le même --collection-group, même avec des --cards-as différents — sinon "
          "l'UI les propose comme des compléments indépendants qui peuvent se marcher dessus.")
+    if (args.collection_label or args.collection_group) and not Config().default_collection_source():
+        print(f"\nAstuce (P12) : une fois les URLs complétées, "
+             f"`studio config set-default-collection {args.out}/collection.json` propose "
+             "ces packs automatiquement à l'ouverture de `studio ui` (zéro copier-coller).")
     return 0
 
 
@@ -721,12 +737,18 @@ def build_parser() -> argparse.ArgumentParser:
                     help="dossier déjà construit par `repos build` (contient .repos-build.json)")
     ru.set_defaults(func=cmd_repos_update)
 
-    pc = sub.add_parser("config", help="configuration locale (token GitHub…)")
+    pc = sub.add_parser("config", help="configuration locale (token GitHub, collection par défaut…)")
     sc = pc.add_subparsers(dest="sub", required=True)
     sct = sc.add_parser("set-github-token",
                         help="token pour les dépôts privés (import sélectif) ; vide = effacer")
     sct.add_argument("token", nargs="?", default=None)
     sct.set_defaults(func=cmd_config_set_token)
+
+    scdc = sc.add_parser("set-default-collection",
+                         help="collection.json (chemin local ou URL) auto-analysée à "
+                              "l'ouverture de `studio ui` (P12) ; vide = effacer")
+    scdc.add_argument("source", nargs="?", default=None)
+    scdc.set_defaults(func=cmd_config_set_default_collection)
     return p
 
 
