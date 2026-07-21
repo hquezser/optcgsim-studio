@@ -19,6 +19,8 @@ Endpoints (préfixe /api) :
     POST /decks/sync-from-sim       -> importe les decks faits EN JEU (additif, jamais de suppression)
     POST /deckpacks/export {ids, name, author?} -> génère un deckpack.json à partir de decks en base
     POST /collections/resolve {source} -> résout un collection.json (P10-c) sans rien importer
+    GET  /config                    -> {github_token_set, default_collection_source} (P7/P12)
+    POST /config {github_token?, default_collection_source?} -> règle l'un et/ou l'autre
 
 Écriture (apply/remove) : passe par AssetManager -> mêmes garde-fous (backup, atomique,
 restore). Le serveur écoute sur 127.0.0.1 uniquement (jamais exposé au réseau).
@@ -216,14 +218,20 @@ class StudioService:
                 source, name, follow, reporter, only_categories, for_decks,
                 leaders_only, only_types))
 
-    # ------------------------------------------------------------ config token (secret)
+    # ------------------------------------------------------------ config (token secret + P12)
     def get_config(self) -> dict:
-        # ne renvoie JAMAIS le token en clair — seulement s'il est configuré.
-        return {"github_token_set": self.config.has_github_token()}
+        # ne renvoie JAMAIS le token en clair — seulement s'il est configuré. La collection
+        # par défaut (P12) N'EST PAS un secret : renvoyée telle quelle.
+        return {"github_token_set": self.config.has_github_token(),
+               "default_collection_source": self.config.default_collection_source()}
 
     def set_github_token(self, token: str | None) -> dict:
         self.config.set_github_token(token)
         return {"github_token_set": self.config.has_github_token()}
+
+    def set_default_collection_source(self, source: str | None) -> dict:
+        self.config.set_default_collection_source(source)
+        return {"default_collection_source": self.config.default_collection_source()}
 
     def add_zip_bytes(self, data: bytes, name: str, on_progress=None) -> dict:
         tmp = Path(tempfile.mkdtemp(prefix="studio-up-"))
@@ -486,7 +494,11 @@ def make_handler(svc: StudioService):
                 # via GET /api/jobs/<id> — fermer l'onglet n'interrompt jamais le travail.
                 if path == "/api/config":
                     b = self._body_json()
-                    return self._send(200, svc.set_github_token(b.get("github_token")))
+                    if "github_token" in b:
+                        svc.set_github_token(b.get("github_token"))
+                    if "default_collection_source" in b:
+                        svc.set_default_collection_source(b.get("default_collection_source"))
+                    return self._send(200, svc.get_config())
                 if path == "/api/packs/preview":
                     b = self._body_json()
                     return self._send(200, svc.preview(b["source"]))

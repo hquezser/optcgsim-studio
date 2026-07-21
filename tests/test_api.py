@@ -295,12 +295,42 @@ def test_config_token_never_returned_in_clear(server, svc, monkeypatch, tmp_path
     from studio.config import Config
     monkeypatch.setattr(svc, "config", Config(state_dir=tmp_path / "cfg"))
     code, r = _get(server, "/api/config")
-    assert code == 200 and r == {"github_token_set": False}
+    assert code == 200 and r == {"github_token_set": False, "default_collection_source": None}
     code, r = _post(server, "/api/config", {"github_token": "ghp_secret"})
-    assert r == {"github_token_set": True}          # booléen, JAMAIS la valeur
+    assert r == {"github_token_set": True, "default_collection_source": None}  # jamais la valeur
     code, r = _get(server, "/api/config")
-    assert r == {"github_token_set": True}
+    assert r == {"github_token_set": True, "default_collection_source": None}
     assert "ghp_secret" not in json.dumps(r)
+
+
+# ------------------------------------------------------------------ P12 : collection par défaut
+def test_config_default_collection_source_returned_in_clear(server, svc, monkeypatch, tmp_path):
+    from studio.config import Config
+    monkeypatch.setattr(svc, "config", Config(state_dir=tmp_path / "cfg"))
+    code, r = _post(server, "/api/config", {"default_collection_source": "/tmp/collection.json"})
+    assert code == 200
+    assert r == {"github_token_set": False, "default_collection_source": "/tmp/collection.json"}
+    code, r = _get(server, "/api/config")
+    assert r["default_collection_source"] == "/tmp/collection.json"
+
+
+def test_config_default_collection_source_cleared_with_null(server, svc, monkeypatch, tmp_path):
+    from studio.config import Config
+    monkeypatch.setattr(svc, "config", Config(state_dir=tmp_path / "cfg"))
+    _post(server, "/api/config", {"default_collection_source": "/tmp/collection.json"})
+    code, r = _post(server, "/api/config", {"default_collection_source": None})
+    assert code == 200 and r["default_collection_source"] is None
+
+
+def test_config_token_and_default_collection_independent(server, svc, monkeypatch, tmp_path):
+    from studio.config import Config
+    monkeypatch.setattr(svc, "config", Config(state_dir=tmp_path / "cfg"))
+    _post(server, "/api/config", {"github_token": "ghp_secret"})
+    code, r = _post(server, "/api/config", {"default_collection_source": "/tmp/collection.json"})
+    assert r == {"github_token_set": True, "default_collection_source": "/tmp/collection.json"}
+    # régler l'un ne doit jamais effacer l'autre (clé absente du body = inchangé)
+    code, r = _post(server, "/api/config", {"github_token": None})
+    assert r == {"github_token_set": False, "default_collection_source": "/tmp/collection.json"}
 
 
 # ------------------------------------------------------------------ P7 : preview
