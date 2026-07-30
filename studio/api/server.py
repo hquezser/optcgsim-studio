@@ -60,6 +60,22 @@ class _UploadTooLarge(Exception):
     """Corps de requête au-delà du plafond — répondu en 413, jamais en trace brute."""
 
 
+class _RequeteInvalide(Exception):
+    """Corps de requête mal formé (champ manquant) — c'est une faute du CLIENT, donc 400.
+
+    Avant, `b["source"]` levait un `KeyError` attrapé par le gestionnaire prévu pour les
+    ressources introuvables : oublier un champ répondait « 404 introuvable : 'source' », ce
+    qui envoie chercher un problème de ressource là où il n'y a qu'un champ oublié.
+    """
+
+
+def _champ(corps: dict, nom: str):
+    """Lit un champ OBLIGATOIRE du corps JSON, avec une erreur exploitable s'il manque."""
+    if nom not in corps:
+        raise _RequeteInvalide(f"champ obligatoire manquant : « {nom} »")
+    return corps[nom]
+
+
 def _pack_kind(rep) -> str:
     cats = [k for k, v in (("cards", rep.cards), ("playmats", rep.playmats),
                            ("cardbacks", rep.cardbacks), ("backgrounds", rep.backgrounds),
@@ -574,10 +590,18 @@ def make_handler(svc: StudioService):
                 if m:
                     return self._send(200, svc.job_status(m.group(1)))
                 return self._send(404, {"error": "not found"})
+            # Même échelle d'erreurs qu'en POST : le code renvoyé ne doit pas dépendre du
+            # verbe. Avant, une panne interne donnait 400 en GET (« tu as mal demandé ») et
+            # 500 en POST (« j'ai échoué ») pour la même cause.
+            except _RequeteInvalide as e:
+                return self._send(400, {"error": str(e)})
             except KeyError as e:
                 return self._send(404, {"error": f"introuvable : {e}"})
-            except Exception as e:  # noqa: BLE001 — surface l'erreur au client local
+            except (AssetError, importer.ImportError_, packlib.PackError,
+                    collections.CollectionError) as e:
                 return self._send(400, {"error": str(e)})
+            except Exception as e:  # noqa: BLE001
+                return self._send(500, {"error": str(e)})
 
         def do_POST(self):
             u = urlparse(self.path)
@@ -598,11 +622,11 @@ def make_handler(svc: StudioService):
                     return self._send(200, svc.get_config())
                 if path == "/api/packs/preview":
                     b = self._body_json()
-                    return self._send(200, svc.preview(b["source"]))
+                    return self._send(200, svc.preview(_champ(b, "source")))
                 if path == "/api/packs/add":
                     b = self._body_json()
                     jid = svc.start_add_job(
-                        b["source"], b.get("name"), b.get("follow", False),
+                        _champ(b, "source"), b.get("name"), b.get("follow", False),
                         only_categories=b.get("only_categories"),
                         for_decks=b.get("for_decks"), leaders_only=b.get("leaders_only", False),
                         only_types=b.get("only_types"))
@@ -639,20 +663,22 @@ def make_handler(svc: StudioService):
                     return self._send(200, svc.sync_from_sim())
                 if path == "/api/deckpacks/validate":
                     b = self._body_json()
-                    return self._send(200, svc.validate_deckpack(b["source"]))
+                    return self._send(200, svc.validate_deckpack(_champ(b, "source")))
                 if path == "/api/deckpacks/add":
                     b = self._body_json()
-                    return self._send(202, {"job_id": svc.start_deckpack_job(b["source"])})
+                    return self._send(202, {"job_id": svc.start_deckpack_job(_champ(b, "source"))})
                 if path == "/api/deckpacks/export":
                     b = self._body_json()
                     return self._send(200, svc.export_deckpack(
-                        b["ids"], b["name"], b.get("author")))
+                        _champ(b, "ids"), _champ(b, "name"), b.get("author")))
                 if path == "/api/collections/resolve":
                     b = self._body_json()
-                    return self._send(200, svc.resolve_collection(b["source"]))
+                    return self._send(200, svc.resolve_collection(_champ(b, "source")))
                 return self._send(404, {"error": "not found"})
             except _UploadTooLarge as e:
                 return self._send(413, {"error": str(e)})
+            except _RequeteInvalide as e:
+                return self._send(400, {"error": str(e)})
             except KeyError as e:
                 return self._send(404, {"error": f"introuvable : {e}"})
             except (AssetError, importer.ImportError_, packlib.PackError,

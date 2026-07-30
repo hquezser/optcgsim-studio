@@ -740,3 +740,42 @@ def test_packs_reports_applied_count_without_hashing_any_file(svc, tmp_path, mon
     assert packs[0]["name"] == "Theme"
     assert packs[0]["applied"] >= 1, "le compte doit rester juste"
     assert appels == [], f"aucun fichier ne doit être haché, or : {appels}"
+
+
+# ------------------------------- P16.2/16.3 : codes d'erreur justes et indépendants du verbe
+def test_missing_required_field_is_400_not_404(server):
+    """Oublier un champ est une faute du CLIENT, pas une ressource introuvable.
+
+    Avant, `b["source"]` levait un KeyError attrapé par le gestionnaire des ressources
+    introuvables : la réponse était « 404 introuvable : 'source' », qui envoie chercher un
+    problème de ressource là où il n'y a qu'un champ oublié.
+    """
+    try:
+        _post(server, "/api/packs/add", {"name": "SansSource"})
+        raise AssertionError("un champ obligatoire manquant doit être refusé")
+    except urllib.error.HTTPError as e:
+        assert e.code == 400, f"attendu 400, reçu {e.code}"
+        message = json.loads(e.read())["error"]
+        assert "source" in message and "manquant" in message
+
+
+def test_missing_field_on_export_is_also_400(server):
+    try:
+        _post(server, "/api/deckpacks/export", {"ids": []})     # `name` manquant
+        raise AssertionError("un champ obligatoire manquant doit être refusé")
+    except urllib.error.HTTPError as e:
+        assert e.code == 400
+        assert "name" in json.loads(e.read())["error"]
+
+
+def test_internal_failure_is_500_on_get_like_on_post(server, svc, monkeypatch):
+    """Le code d'erreur ne doit pas dépendre du verbe HTTP : une panne interne était
+    rapportée 400 en GET (« tu as mal demandé ») et 500 en POST (« j'ai échoué »)."""
+    def panne():
+        raise RuntimeError("panne interne simulée")
+    monkeypatch.setattr(svc, "inventory", panne)
+    try:
+        _get(server, "/api/inventory")
+        raise AssertionError("aurait dû échouer")
+    except urllib.error.HTTPError as e:
+        assert e.code == 500, f"une panne interne doit être 500, reçu {e.code}"
