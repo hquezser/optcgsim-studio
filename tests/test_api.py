@@ -619,3 +619,39 @@ def test_own_origin_is_accepted(server):
     code, _ = _raw(server, "/api/config",
                    headers={"Origin": server.replace("127.0.0.1", "localhost")})
     assert code == 200, "localhost et 127.0.0.1 désignent la même UI"
+
+
+# ------------------- P15.2 : un échec d'ÉCRITURE ne fait pas perdre les decks suivants
+def test_import_deckpack_write_failure_does_not_drop_following_decks(svc, tmp_path,
+                                                                     monkeypatch):
+    """La résolution peut réussir et la PERSISTANCE échouer (nom impossible à écrire, dossier
+    du sim non écrivable, base verrouillée). Avant, le premier échec faisait perdre tous les
+    decks suivants et marquait le job entier en erreur — alors que la docstring promet
+    l'inverse et que les échecs de RÉSOLUTION, eux, étaient déjà isolés.
+    """
+    src = tmp_path / "pack"
+    src.mkdir()
+    (src / "deckpack.json").write_text(json.dumps({
+        "name": "Meta OP16", "decks": [
+            {"name": "Avant", "text": _DECK50},
+            {"name": "Maudit", "text": _DECK50},
+            {"name": "Après", "text": _DECK50},
+        ]}))
+
+    from studio.decks import importer as _imp
+    original = _imp.Decklist.save_to_sim
+
+    def save_capricieux(self, name, persistent_dir):
+        if name == "Maudit":
+            raise OSError("disque plein")
+        return original(self, name, persistent_dir)
+
+    monkeypatch.setattr(_imp.Decklist, "save_to_sim", save_capricieux)
+
+    r = svc.import_deckpack(str(src))
+
+    assert [d["name"] for d in r["imported"]] == ["Avant", "Après"], (
+        "le deck APRÈS celui en échec doit quand même être importé")
+    assert [f["name"] for f in r["failed"]] == ["Maudit"]
+    assert "disque plein" in r["failed"][0]["reason"]
+    assert {d["name"] for d in svc.decks()} == {"Avant", "Après"}

@@ -463,20 +463,37 @@ def cmd_decks_import_pack(args) -> int:
         profiles = store.list("profiles")
         prof = profiles[0] if profiles else store.put("profiles", {"name": "default",
                                                                    "prefs": {}})
+        # Un échec d'ÉCRITURE ne doit pas faire perdre les decks suivants (même politique que
+        # la résolution, et que la route API équivalente).
+        persisted, failed = [], list(rep.failed)
         for rd in rep.imported:
-            rd.deck.save_to_sim(rd.name, inst.persistent)
-            store.put("decks", {"profile_id": prof["id"], "name": rd.name,
-                                "leader": rd.deck.leader, "cards": rd.deck.cards,
-                                "tags": rd.tags, "source": rd.deck.source})
-    print(rep.summary())
-    for d in rep.imported:
+            try:
+                rd.deck.save_to_sim(rd.name, inst.persistent)
+                store.put("decks", {"profile_id": prof["id"], "name": rd.name,
+                                    "leader": rd.deck.leader, "cards": rd.deck.cards,
+                                    "tags": rd.tags, "source": rd.deck.source})
+                persisted.append(rd)
+            except OSError as e:
+                failed.append({"name": rd.name, "reason": str(e)})
+    # Résumé recalculé sur ce qui a RÉELLEMENT été persisté : `rep.summary()` ne connaît que
+    # les échecs de résolution, pas ceux d'écriture.
+    msg = f"« {rep.name} » : {len(persisted)} deck(s) importé(s)"
+    if failed:
+        msg += f", {len(failed)} en échec"
+    if rep.warnings:
+        msg += f", {len(rep.warnings)} avertissement(s)"
+    print(msg)
+    for d in persisted:
         print(f"  ✓ {d.name} ({d.deck.leader}, {d.deck.total} cartes)"
               + (f" [{', '.join(d.tags)}]" if d.tags else ""))
-    for f in rep.failed:
+    for f in failed:
         print(f"  ✗ {f['name']} : {f['reason']}")
     for w in rep.warnings:
         print(f"  ⚠ {w}")
-    return 0
+    # Code de sortie honnête : un script qui enchaîne `import-pack` doit pouvoir détecter
+    # qu'une partie du pack n'est pas passée. Renvoyer 0 avec des ✗ à l'écran rend l'échec
+    # invisible en CI ou dans un enchaînement `&&`.
+    return 1 if failed else 0
 
 
 def cmd_decks_validate_pack(args) -> int:

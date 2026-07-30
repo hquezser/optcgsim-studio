@@ -19,6 +19,10 @@ _JSON_COLS = {"profiles": ("prefs",), "decks": ("cards", "tags"),
               "cosmetic_packs": ("manifest",)}
 
 
+class CorruptRecord(Exception):
+    """Un enregistrement dont une colonne JSON est illisible — isolé, jamais fatal."""
+
+
 def _device_id(state_dir: Path) -> str:
     """Identifiant stable de CET appareil (fichier local, créé une fois)."""
     f = state_dir / "device_id"
@@ -36,8 +40,20 @@ class LocalStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(db_path))
         self.conn.row_factory = sqlite3.Row
+        # WAL : l'UI ouvre une connexion NEUVE par requête et les jobs de fond écrivent depuis
+        # leurs propres threads. En mode `delete` (défaut), une écriture longue BLOQUE les
+        # lectures ; en WAL, lecteurs et rédacteur cohabitent — l'UI reste réactive pendant
+        # l'import d'un gros pack.
+        #
+        # `busy_timeout` est laissé EXPLICITE mais ne change rien : Python le règle déjà à
+        # 5000 ms via `sqlite3.connect(timeout=5.0)`. Mesuré — un scénario à 6 threads × 12
+        # écritures ne produit AUCUN « database is locked », ni avant ni après ce changement.
+        # WAL est donc une amélioration de réactivité, pas un correctif de panne observée.
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.executescript(_SCHEMA.read_text())
         self.device_id = _device_id(db_path.parent)
+        self.corrupt: list[str] = []      # enregistrements sautés par `list()`, pour rapport
 
     def __enter__(self):
         return self
@@ -53,10 +69,21 @@ class LocalStore:
             raise ValueError(f"Entité inconnue : {entity}")
 
     def _decode(self, entity: str, row: sqlite3.Row) -> dict:
+        """Décode les colonnes JSON. Lève `CorruptRecord` si l'une est illisible.
+
+        L'appelant (`list`) ISOLE alors ce seul enregistrement : sans ça, une cellule
+        corrompue (base éditée à la main, corruption disque, sérialisation d'une version
+        antérieure) faisait échouer `list("decks")` en entier — l'utilisateur ne voyait plus
+        AUCUN deck et croyait tout avoir perdu, alors qu'un seul était en cause.
+        """
         d = dict(row)
         for col in _JSON_COLS[entity]:
             if isinstance(d.get(col), str):
-                d[col] = json.loads(d[col])
+                try:
+                    d[col] = json.loads(d[col])
+                except json.JSONDecodeError as e:
+                    raise CorruptRecord(
+                        f"{entity}/{d.get('id')} : colonne {col!r} illisible ({e})") from e
         return d
 
     def _encode(self, entity: str, record: dict) -> dict:
@@ -68,11 +95,20 @@ class LocalStore:
 
     # ------------------------------------------------------------ protocole SyncStore
     def list(self, entity: str, include_deleted: bool = False) -> list[dict]:
+        """Enregistrements lisibles de l'entité. Un enregistrement corrompu est SAUTÉ et
+        signalé dans `self.corrupt`, jamais propagé — perdre une ligne ne doit pas rendre
+        toute la collection invisible."""
         self._check_entity(entity)
         q = f"SELECT * FROM {entity}"
         if not include_deleted:
             q += " WHERE deleted = 0"
-        return [self._decode(entity, r) for r in self.conn.execute(q)]
+        out = []
+        for r in self.conn.execute(q):
+            try:
+                out.append(self._decode(entity, r))
+            except CorruptRecord as e:
+                self.corrupt.append(str(e))
+        return out
 
     def get(self, entity: str, record_id: str) -> dict | None:
         self._check_entity(entity)

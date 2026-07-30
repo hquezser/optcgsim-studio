@@ -374,13 +374,22 @@ class StudioService:
         ceux qui réussissent (un échec n'empêche pas les autres). Job de fond."""
         from ..decks import deckpack
         rep = deckpack.from_source(source, packlib.ingest, self.lib_dir / ".deckwork")
+        # La PERSISTANCE peut échouer là où la résolution avait réussi (nom impossible à
+        # écrire sur ce système de fichiers, dossier du sim non écrivable, base verrouillée).
+        # Sans garde, le premier échec faisait perdre tous les decks SUIVANTS et marquait le
+        # job entier en erreur — alors que la docstring promet l'inverse.
+        persisted, failed = [], list(rep.failed)
         with self._store() as store:
             for rd in rep.imported:
-                self._persist_deck(store, rd.deck, rd.name, rd.tags)
+                try:
+                    self._persist_deck(store, rd.deck, rd.name, rd.tags)
+                    persisted.append(rd)
+                except (OSError, importer.ImportError_) as e:
+                    failed.append({"name": rd.name, "reason": str(e)})
         return {"name": rep.name, "author": rep.author,
                 "imported": [{"name": d.name, "leader": d.deck.leader,
-                              "total": d.deck.total, "tags": d.tags} for d in rep.imported],
-                "failed": rep.failed, "warnings": rep.warnings}
+                              "total": d.deck.total, "tags": d.tags} for d in persisted],
+                "failed": failed, "warnings": rep.warnings}
 
     def validate_deckpack(self, source: str) -> dict:
         """Contrôle à blanc (dry-run) : résout tous les decks SANS rien persister.

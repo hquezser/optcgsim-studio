@@ -207,7 +207,10 @@ def _ingest_scoped(source: str, work_dir: Path, prefix: str | None, token: str |
                     if _in_prefix_scope(rf.path, packlib.classify_rel(rf.path)[0], prefix)]
             return sourcefetch.fetch_selected(source, kept, work_dir / "selected",
                                               token=token, on_progress=on_progress)
-    return ingest(source, work_dir, on_progress=on_progress)
+    # `token=token` indispensable ici aussi : sans lui, un dépôt PRIVÉ dont l'exploration a
+    # échoué retombe sur un téléchargement anonyme et échoue avec un message opaque, alors que
+    # l'utilisateur a bien configuré son token (`add_pack` le passe déjà, lui).
+    return ingest(source, work_dir, on_progress=on_progress, token=token)
 
 
 def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",

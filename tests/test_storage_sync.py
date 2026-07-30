@@ -137,3 +137,74 @@ def test_offline_edits_flow_on_next_sync(device_a, device_b):
 def test_unknown_entity_rejected(device_a):
     with pytest.raises(ValueError, match="Entité inconnue"):
         device_a.put("users; DROP TABLE decks", {"name": "x"})
+
+
+# ------------------------------------------------- P15.9 : un record corrompu n'aveugle pas tout
+def test_corrupt_json_cell_isolates_only_that_record(tmp_path):
+    """Une cellule JSON illisible ne doit pas rendre TOUTE l'entité invisible.
+
+    Avant : `json.loads` levait dans `_decode`, l'exception remontait par `list()`, et l'UI
+    n'affichait plus aucun deck — l'utilisateur croyait avoir tout perdu pour un seul
+    enregistrement en cause.
+    """
+    with LocalStore(tmp_path / "studio.db") as s:
+        pid = _mk_profile(s)["id"]
+        _mk_deck(s, pid, name="Sanji")
+        casse = _mk_deck(s, pid, name="Zoro")
+        _mk_deck(s, pid, name="Kid")
+        s.conn.execute("UPDATE decks SET cards='{oops' WHERE id=?", (casse["id"],))
+        s.conn.commit()
+
+        rows = s.list("decks")
+
+        assert {r["name"] for r in rows} == {"Sanji", "Kid"}, "les decks sains restent lisibles"
+        assert len(s.corrupt) == 1
+        assert casse["id"] in s.corrupt[0] and "cards" in s.corrupt[0], (
+            "le rapport doit NOMMER l'enregistrement fautif")
+        # demander explicitement le record cassé lève, en le NOMMANT
+        from studio.storage.local import CorruptRecord
+        with pytest.raises(CorruptRecord, match="cards"):
+            s.get("decks", casse["id"])
+
+
+# ------------------------------------------------------------- P15.3 : concurrence SQLite
+def test_wal_mode_is_enabled(tmp_path):
+    """WAL : l'UI ouvre une connexion neuve par requête et les jobs écrivent en parallèle."""
+    with LocalStore(tmp_path / "studio.db") as s:
+        mode = s.conn.execute("PRAGMA journal_mode").fetchone()[0]
+    assert mode.lower() == "wal"
+
+
+def test_concurrent_writers_do_not_raise_database_is_locked(tmp_path):
+    """Écritures VRAIMENT simultanées — le cas « UI + jobs de fond ».
+
+    Non-régression, PAS la preuve du passage en WAL : ce scénario passait déjà avant (Python
+    règle `busy_timeout` à 5 s par défaut, contrairement à ce que supposait l'audit). Il
+    protège contre une régression future qui casserait la concurrence — par exemple une
+    connexion partagée entre threads ou un `timeout=0`.
+    """
+    import threading
+    db = tmp_path / "studio.db"
+    with LocalStore(db) as seed:
+        pid = _mk_profile(seed)["id"]
+
+    erreurs, barriere = [], threading.Barrier(6)
+
+    def rafale(n):
+        try:
+            with LocalStore(db) as s:
+                barriere.wait(timeout=10)      # départ simultané : maximise la contention
+                for i in range(12):
+                    _mk_deck(s, pid, name=f"deck-{n}-{i}")
+        except Exception as e:                 # noqa: BLE001 — on veut TOUTE erreur
+            erreurs.append(f"{type(e).__name__}: {e}")
+
+    threads = [threading.Thread(target=rafale, args=(n,)) for n in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert erreurs == [], f"écritures concurrentes en échec : {erreurs[:3]}"
+    with LocalStore(db) as s:
+        assert len(s.list("decks")) == 72

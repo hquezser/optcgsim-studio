@@ -95,7 +95,7 @@ def _source_tree(root: Path) -> Path:
 
 def test_build_routes_into_family_repos(tmp_path):
     src = _source_tree(tmp_path / "src")
-    fake_ingest = lambda source, wd, on_progress=None: src
+    fake_ingest = lambda source, wd, on_progress=None, token=None: src
     out = tmp_path / "out"
     rep = repobuild.build(["dummy://src"], out, cards_as="alt",
                           ingest=fake_ingest, git_init=False)
@@ -138,7 +138,7 @@ def test_build_theme_junk_txt_files_never_pollute_translations(tmp_path):
     (src / "CardBackRegular.txt").write_text("test")   # erreur d'extension côté auteur du thème
     out = tmp_path / "out"
     rep = repobuild.build(["theme-link"], out, cards_as="alt",
-                          ingest=lambda s, wd, on_progress=None: src, git_init=False)
+                          ingest=lambda s, wd, on_progress=None, token=None: src, git_init=False)
 
     assert not (out / "translations").exists()   # aucune vraie traduction -> pas de dépôt
     assert "playmats" in rep.repos and "cardbacks" in rep.repos
@@ -150,7 +150,7 @@ def test_build_collision_last_source_wins(tmp_path):
     a = _minimal_card_src(tmp_path / "a", "OP01-001.png")
     b = _minimal_card_src(tmp_path / "b", "OP01-001.png")
     srcs = {"src://a": a, "src://b": b}
-    fake_ingest = lambda source, wd, on_progress=None: srcs[source]
+    fake_ingest = lambda source, wd, on_progress=None, token=None: srcs[source]
     out = tmp_path / "out"
     rep = repobuild.build(["src://a", "src://b"], out, ingest=fake_ingest, git_init=False)
     assert rep.collisions and rep.collisions[0]["repo"] == "cards-alt"
@@ -164,7 +164,7 @@ def _minimal_card_src(root: Path, filename: str) -> Path:
 def test_build_git_init_creates_repo_and_gitignore(tmp_path):
     src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
     out = tmp_path / "out"
-    repobuild.build(["s"], out, ingest=lambda s, wd, on_progress=None: src, git_init=True)
+    repobuild.build(["s"], out, ingest=lambda s, wd, on_progress=None, token=None: src, git_init=True)
     assert (out / "cards-alt" / ".gitignore").is_file()
     # .git présent seulement si git est installé ; on ne l'exige pas
 
@@ -175,7 +175,7 @@ def test_rebuild_same_source_is_not_a_false_collision(tmp_path):
     existant comme une collision (bug initial : collision détectée sur dest.exists())."""
     src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
     out = tmp_path / "out"
-    fake_ingest = lambda s, wd, on_progress=None: src
+    fake_ingest = lambda s, wd, on_progress=None, token=None: src
     rep1 = repobuild.build(["s"], out, ingest=fake_ingest, git_init=False)
     rep2 = repobuild.build(["s"], out, ingest=fake_ingest, git_init=False)
     assert rep1.collisions == [] and rep2.collisions == []
@@ -185,7 +185,7 @@ def test_rebuild_reports_added_changed_orphans(tmp_path):
     src = tmp_path / "src"
     make_png(src / "Cards" / "OP01" / "OP01-001.png")   # leader, inchangé
     out = tmp_path / "out"
-    fake_ingest = lambda s, wd, on_progress=None: src
+    fake_ingest = lambda s, wd, on_progress=None, token=None: src
     repobuild.build(["s"], out, ingest=fake_ingest, git_init=False)
 
     # nouvelle "sortie de set" : le leader change de version + un event apparaît + rien d'autre
@@ -204,7 +204,7 @@ def test_rebuild_reports_orphan_when_source_drops_a_file(tmp_path):
     make_png(src / "Cards" / "OP01" / "OP01-001.png")
     make_png(src / "Cards" / "OP01" / "OP01-016.png")
     out = tmp_path / "out"
-    fake_ingest = lambda s, wd, on_progress=None: src
+    fake_ingest = lambda s, wd, on_progress=None, token=None: src
     repobuild.build(["s"], out, ingest=fake_ingest, git_init=False)
 
     (src / "Cards" / "OP01" / "OP01-016.png").unlink()   # retiré de la source
@@ -220,7 +220,7 @@ def test_build_records_log_for_update(tmp_path):
     src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
     out = tmp_path / "out"
     repobuild.build(["s"], out, cards_as="alt", split_cards_by_type=True,
-                    ingest=lambda s, wd, on_progress=None: src, git_init=False)
+                    ingest=lambda s, wd, on_progress=None, token=None: src, git_init=False)
     log = repobuild.load_build_log(out)
     assert log == [{"sources": ["s"], "cards_as": "alt", "split_cards_by_type": True,
                     "path_prefix": None, "lang": None,
@@ -232,7 +232,7 @@ def test_build_records_log_for_update(tmp_path):
 def test_build_log_dedupes_by_config_not_by_sources(tmp_path):
     src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
     out = tmp_path / "out"
-    ingest = lambda s, wd, on_progress=None: src
+    ingest = lambda s, wd, on_progress=None, token=None: src
     repobuild.build(["s"], out, cards_as="alt", ingest=ingest, git_init=False)
     repobuild.build(["s", "s2"], out, cards_as="alt", ingest=ingest, git_init=False)
     log = repobuild.load_build_log(out)
@@ -256,7 +256,7 @@ def test_mixed_variants_in_one_build_collide(tmp_path):
     src = _fr_mixed_source(tmp_path / "src")
     out = tmp_path / "out"
     rep = repobuild.build(["fr"], out, cards_as="translated",
-                          ingest=lambda s, wd, on_progress=None: src, git_init=False)
+                          ingest=lambda s, wd, on_progress=None, token=None: src, git_init=False)
     assert rep.collisions and rep.collisions[0]["repo"] == "translations"
 
 
@@ -265,7 +265,7 @@ def test_path_prefix_splits_variants_into_separate_families(tmp_path):
     -> les deux images du MÊME id coexistent, chacune dans sa famille."""
     src = _fr_mixed_source(tmp_path / "src")
     out = tmp_path / "out"
-    ingest = lambda s, wd, on_progress=None: src
+    ingest = lambda s, wd, on_progress=None, token=None: src
     rep_classic = repobuild.build(["fr"], out, cards_as="translated",
                                   path_prefix="FR_classique", ingest=ingest, git_init=False)
     rep_alt = repobuild.build(["fr"], out, cards_as="translated-alt",
@@ -288,7 +288,7 @@ def test_path_prefix_never_excludes_shared_translation_file(tmp_path):
     --path-prefix, pas seulement dans un build « sans préfixe » séparé."""
     src = _fr_mixed_source(tmp_path / "src")
     out = tmp_path / "out"
-    ingest = lambda s, wd, on_progress=None: src
+    ingest = lambda s, wd, on_progress=None, token=None: src
     rep = repobuild.build(["fr"], out, cards_as="translated",
                           path_prefix="FR_classique", ingest=ingest, git_init=False)
     assert (out / "translations" / "TRANSLATION.txt").read_text() == "Key=Val\n"
@@ -301,7 +301,7 @@ def test_path_prefix_recorded_and_replayed_by_update(tmp_path):
     out = tmp_path / "out"
     calls = []
 
-    def fake_ingest(source, wd, on_progress=None):
+    def fake_ingest(source, wd, on_progress=None, token=None):
         calls.append(source)
         return src
 
@@ -325,7 +325,7 @@ def test_two_variants_same_lang_converge_into_one_translation_repo(tmp_path):
     TRANSLATION.txt convergent dans un seul dépôt translations-fr (pas un par variante)."""
     src = _fr_mixed_source(tmp_path / "src")
     out = tmp_path / "out"
-    ingest = lambda s, wd, on_progress=None: src
+    ingest = lambda s, wd, on_progress=None, token=None: src
     repobuild.build(["fr"], out, cards_as="translated-fr-classic", path_prefix="FR_classique",
                     lang="fr", ingest=ingest, git_init=False)
     repobuild.build(["fr"], out, cards_as="translated-fr-fullart", path_prefix="FR_alt",
@@ -349,7 +349,7 @@ def test_different_langs_never_collide():
 def test_lang_recorded_and_replayed_by_update(tmp_path):
     src = _fr_mixed_source(tmp_path / "src")
     out = tmp_path / "out"
-    ingest = lambda s, wd, on_progress=None: src
+    ingest = lambda s, wd, on_progress=None, token=None: src
     repobuild.build(["fr"], out, cards_as="translated", path_prefix="FR_classique",
                     lang="fr", ingest=ingest, git_init=False)
     log = repobuild.load_build_log(out)
@@ -365,7 +365,7 @@ def test_update_replays_recorded_sources_without_reasking(tmp_path):
     out = tmp_path / "out"
     calls = []
 
-    def fake_ingest(source, wd, on_progress=None):
+    def fake_ingest(source, wd, on_progress=None, token=None):
         calls.append(source)
         return src
 
@@ -395,7 +395,7 @@ def test_rebuild_over_legacy_manifest_with_int_files(tmp_path):
     legacy.mkdir(parents=True)
     (legacy / "MANIFEST.json").write_text(json.dumps({"family": "cards-alt", "files": 42}))
 
-    rep = repobuild.build(["s"], out, ingest=lambda s, wd, on_progress=None: src, git_init=False)
+    rep = repobuild.build(["s"], out, ingest=lambda s, wd, on_progress=None, token=None: src, git_init=False)
     assert rep.repos["cards-alt"].added == ["Leaders/Cards/OP01/OP01-001.png"]
     assert rep.repos["cards-alt"].orphans == []      # l'entier n'est pas traité comme des chemins
     man = json.loads((legacy / "MANIFEST.json").read_text())
@@ -491,7 +491,7 @@ def test_build_falls_back_to_full_ingest_when_source_not_explorable(tmp_path, mo
     src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
     rep = repobuild.build(["https://dropbox.com/x"], tmp_path / "out", cards_as="alt",
                           path_prefix="Cards",
-                          ingest=lambda s, wd, on_progress=None: src, git_init=False)
+                          ingest=lambda s, wd, on_progress=None, token=None: src, git_init=False)
     assert rep.repos["cards-alt"].files == 1
 
 
@@ -504,7 +504,7 @@ def test_build_without_path_prefix_never_calls_selective_fetch(tmp_path, monkeyp
                         lambda url, token=None: called.append(url) or None)
     src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
     repobuild.build(["https://github.com/o/r"], tmp_path / "out", cards_as="alt",
-                    ingest=lambda s, wd, on_progress=None: src, git_init=False)
+                    ingest=lambda s, wd, on_progress=None, token=None: src, git_init=False)
     assert called == []
 
 
@@ -677,7 +677,7 @@ def test_build_upserts_collection_entry_per_family(tmp_path):
     out = tmp_path / "out"
     repobuild.build(["s"], out, cards_as="translated-fr-classic",
                     collection_label="Cartes FR classiques", collection_group="cards",
-                    ingest=lambda s, wd, on_progress=None: src, git_init=False)
+                    ingest=lambda s, wd, on_progress=None, token=None: src, git_init=False)
     data = json.loads((out / "collection.json").read_text())
     assert data["packs"] == [{"family": "translated-fr-classic", "url": "",
                              "label": "Cartes FR classiques", "variant_group": "cards"}]
@@ -687,7 +687,7 @@ def test_build_collection_label_defaults_to_family_name(tmp_path):
     src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
     out = tmp_path / "out"
     repobuild.build(["s"], out, cards_as="alt",
-                    ingest=lambda s, wd, on_progress=None: src, git_init=False)
+                    ingest=lambda s, wd, on_progress=None, token=None: src, git_init=False)
     data = json.loads((out / "collection.json").read_text())
     assert data["packs"] == [{"family": "cards-alt", "url": "", "label": "cards-alt",
                              "variant_group": None}]
@@ -697,7 +697,7 @@ def test_build_upserts_without_duplicating_same_family(tmp_path):
     """Rebuild de la MÊME famille -> l'entrée est mise à jour (nouveau label), pas dupliquée."""
     src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
     out = tmp_path / "out"
-    ingest = lambda s, wd, on_progress=None: src
+    ingest = lambda s, wd, on_progress=None, token=None: src
     repobuild.build(["s"], out, cards_as="alt", collection_label="Premier nom", ingest=ingest,
                     git_init=False)
     repobuild.build(["s"], out, cards_as="alt", collection_label="Nom mis à jour", ingest=ingest,
@@ -712,7 +712,7 @@ def test_build_preserves_manually_filled_url_across_rebuilds(tmp_path):
     par un `repos build`/`update` suivant sur la même famille."""
     src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
     out = tmp_path / "out"
-    ingest = lambda s, wd, on_progress=None: src
+    ingest = lambda s, wd, on_progress=None, token=None: src
     repobuild.build(["s"], out, cards_as="alt", ingest=ingest, git_init=False)
 
     manifest_path = out / "collection.json"
@@ -733,7 +733,7 @@ def test_collection_label_and_group_persisted_and_replayed_by_update(tmp_path):
     src = tmp_path / "src"
     make_png(src / "Cards" / "OP01" / "OP01-001.png")
     out = tmp_path / "out"
-    ingest = lambda s, wd, on_progress=None: src
+    ingest = lambda s, wd, on_progress=None, token=None: src
     repobuild.build(["s"], out, cards_as="alt", collection_label="Alt-arts",
                     collection_group="cards", ingest=ingest, git_init=False)
 
@@ -754,7 +754,7 @@ def test_collection_file_is_visible_not_hidden(tmp_path):
     -- c'est le manifeste destiné à être publié/partagé (cf. docstring repobuild + P10-c)."""
     src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
     out = tmp_path / "out"
-    repobuild.build(["s"], out, cards_as="alt", ingest=lambda s, wd, on_progress=None: src,
+    repobuild.build(["s"], out, cards_as="alt", ingest=lambda s, wd, on_progress=None, token=None: src,
                     git_init=False)
     assert (out / "collection.json").exists()
     assert not (out / "collection.json").name.startswith(".")
