@@ -748,8 +748,26 @@ $('#src').addEventListener('input', ()=>{clearTimeout(previewTimer);
 document.querySelectorAll('.f-type, .f-cat').forEach(
   c=>c.addEventListener('change', refreshPreview));
 
+/** Affiche l'échec d'un chargement DANS la zone concernée, au lieu de la laisser vide.
+ *
+ *  `loadPacks()`/`loadDecks()` partaient sans `.catch()` : si l'API répondait mal (serveur
+ *  arrêté, base verrouillée, erreur 500), la promesse était rejetée en silence, la section
+ *  restait bloquée sur son état vide, et l'utilisateur ne pouvait pas distinguer « aucun
+ *  pack » de « le chargement a échoué ». Une erreur doit se voir. */
+function chargeOuAffiche(promesse, selecteur, quoi){
+  return promesse.catch(e => {
+    const el = $(selecteur);
+    if(el) el.innerHTML = `<div class="empty" style="color:var(--accent)">`
+      + `Impossible de charger ${quoi} : ${esc(e.message)}`
+      + `<br><button class="mini ghost" style="margin-top:8px" data-recharger>Réessayer</button></div>`;
+    el?.querySelector('[data-recharger]')?.addEventListener('click', () => location.reload());
+  });
+}
+
 loadStatus().catch(e=>$('#status').innerHTML=`<span style="color:var(--accent)">${esc(e.message)}</span>`);
-loadPacks(); loadDecks(); loadTokenState();
+chargeOuAffiche(loadPacks(), '#packs', 'la bibliothèque de packs');
+chargeOuAffiche(loadDecks(), '#decks', 'tes decks');
+loadTokenState();              // déjà silencieux par conception (section secondaire)
 autoloadDefaultCollection();   // P12 : auto-analyse la collection par défaut si définie
 resumeJobs();   // reprend l'affichage des jobs encore en cours après un rechargement de page
 </script>

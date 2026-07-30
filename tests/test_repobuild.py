@@ -2,6 +2,7 @@
 génération hors-ligne (ingest factice), collisions, non-classés, et parsing/ingest Drive."""
 
 import json
+import shutil
 import struct
 import zipfile
 import zlib
@@ -166,7 +167,11 @@ def test_build_git_init_creates_repo_and_gitignore(tmp_path):
     out = tmp_path / "out"
     repobuild.build(["s"], out, ingest=lambda s, wd, on_progress=None, token=None: src, git_init=True)
     assert (out / "cards-alt" / ".gitignore").is_file()
-    # .git présent seulement si git est installé ; on ne l'exige pas
+    # Le dépôt lui-même DOIT être initialisé quand git est disponible : sans cette
+    # assertion, le test restait vert même si `git_init=True` ne faisait plus que poser le
+    # .gitignore — c'est-à-dire s'il ne faisait plus son travail.
+    if shutil.which("git"):
+        assert (out / "cards-alt" / ".git").is_dir(), "git_init=True doit initialiser le dépôt"
 
 
 # ------------------------------------------------------------------ P8+ : mise à jour (repos update)

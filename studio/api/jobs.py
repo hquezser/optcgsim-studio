@@ -53,16 +53,38 @@ class ProgressReporter:
             self._job.total = total
 
 
+# Rétention des jobs TERMINÉS. L'UI mémorise les ids en localStorage et peut revenir les
+# consulter après un rechargement de page : purger trop tôt donnerait un 404 sur un job que
+# l'utilisateur voit encore affiché. Une heure couvre largement ce cas, et le plafond en
+# nombre borne la mémoire quand on enchaîne beaucoup d'imports dans une même session (chaque
+# `result` porte un rapport de pack complet).
+_RETENTION_S = 3600
+_MAX_TERMINES = 100
+
+
 class JobManager:
     def __init__(self):
         self._lock = threading.Lock()
         self._jobs: dict[str, JobStatus] = {}
+
+    def _purger(self) -> None:
+        """Retire les jobs terminés trop vieux, ou en surnombre. Appelé sous verrou."""
+        termines = [j for j in self._jobs.values() if j.finished_at is not None]
+        limite = time.time() - _RETENTION_S
+        a_jeter = {j.id for j in termines if j.finished_at < limite}
+        restants = sorted((j for j in termines if j.id not in a_jeter),
+                          key=lambda j: j.finished_at)
+        if len(restants) > _MAX_TERMINES:
+            a_jeter |= {j.id for j in restants[:len(restants) - _MAX_TERMINES]}
+        for jid in a_jeter:
+            del self._jobs[jid]
 
     def start(self, kind: str, fn: Callable[[ProgressReporter], dict]) -> str:
         """Lance `fn(reporter)` dans un thread démon. `fn` doit renvoyer le résultat (dict)
         ou lever une exception (capturée et stockée comme erreur du job)."""
         job = JobStatus(id=uuid.uuid4().hex, kind=kind, started_at=time.time())
         with self._lock:
+            self._purger()          # jamais les jobs EN COURS, seulement les terminés
             self._jobs[job.id] = job
         reporter = ProgressReporter(job, self._lock)
 

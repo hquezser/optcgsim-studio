@@ -1,5 +1,6 @@
 """Tests du gestionnaire de tâches de fond (studio.api.jobs)."""
 
+import threading
 import time
 
 from studio.api.jobs import JobManager
@@ -57,10 +58,74 @@ def test_get_unknown_job_returns_none():
 
 
 def test_survives_independent_of_caller_not_polling():
-    """Le job continue même si personne n'interroge son état pendant un moment — simule la
-    fermeture/rechargement d'onglet côté client : le thread serveur n'est jamais affecté."""
+    """Le job PROGRESSE pendant que personne ne l'interroge — onglet fermé ou rechargé.
+
+    L'ancienne version de ce test lançait un job qui se terminait en microsecondes : elle ne
+    prouvait donc que « un job déjà fini est fini », pas la survie du thread. Une régression
+    qui tuerait les threads à la fin de la requête HTTP serait passée au vert. Ici on observe
+    l'état `running` PUIS `done`, sans interroger pendant la durée du travail.
+    """
     mgr = JobManager()
-    jid = mgr.start("add", lambda reporter: {"survived": True})
-    time.sleep(0.1)          # « personne ne regarde » pendant un moment
+    demarre = threading.Event()
+
+    def travail_long(reporter):
+        demarre.set()
+        time.sleep(0.4)          # dure plus longtemps que le silence de l'appelant
+        return {"survived": True}
+
+    jid = mgr.start("add", travail_long)
+    assert demarre.wait(timeout=5), "le job doit démarrer sans qu'on l'interroge"
+    assert mgr.get(jid)["status"] == "running", "le travail doit être EN COURS ici"
+
+    time.sleep(0.6)              # « personne ne regarde » pendant tout le reste du travail
+
     st = mgr.get(jid)
     assert st["status"] == "done" and st["result"] == {"survived": True}
+
+
+# ------------------------------------------------- P16.9 : le registre ne grossit pas sans fin
+def _termine(mgr, jid, timeout=5):
+    fin = time.time() + timeout
+    while time.time() < fin:
+        if mgr.get(jid)["status"] != "running":
+            return
+        time.sleep(0.005)
+    raise AssertionError("job toujours en cours")
+
+
+def test_finished_jobs_are_capped(monkeypatch):
+    """Chaque `result` porte un rapport de pack complet : sans purge, enchaîner des imports
+    dans une même session fait grossir le registre indéfiniment."""
+    from studio.api import jobs as jobs_mod
+    monkeypatch.setattr(jobs_mod, "_MAX_TERMINES", 5)
+    mgr = JobManager()
+    for i in range(20):
+        _termine(mgr, mgr.start("add", lambda reporter, i=i: {"n": i}))
+    mgr.start("add", lambda reporter: {"declencheur": True})   # la purge a lieu au start
+    assert len(mgr._jobs) <= 6, f"registre non purgé : {len(mgr._jobs)} entrées"
+
+
+def test_purge_never_drops_a_running_job(monkeypatch):
+    """Garde-fou : une purge qui emporterait un job EN COURS ferait perdre son suivi à l'UI."""
+    from studio.api import jobs as jobs_mod
+    monkeypatch.setattr(jobs_mod, "_MAX_TERMINES", 1)
+    monkeypatch.setattr(jobs_mod, "_RETENTION_S", 0)      # purge maximalement agressive
+    mgr = JobManager()
+    bloque = threading.Event()
+    en_cours = mgr.start("add", lambda reporter: bloque.wait(timeout=5) or {"ok": True})
+    for _ in range(10):
+        _termine(mgr, mgr.start("add", lambda reporter: {}))
+    assert mgr.get(en_cours) is not None, "un job en cours ne doit jamais être purgé"
+    assert mgr.get(en_cours)["status"] == "running"
+    bloque.set()
+
+
+def test_recent_finished_job_is_still_readable_after_reload():
+    """L'UI mémorise les ids en localStorage : un job tout juste fini doit rester consultable
+    après un rechargement de page, sinon l'utilisateur voit un 404 sur ce qu'il a sous les yeux."""
+    mgr = JobManager()
+    jid = mgr.start("add", lambda reporter: {"ok": True})
+    _termine(mgr, jid)
+    for _ in range(5):
+        _termine(mgr, mgr.start("add", lambda reporter: {}))
+    assert mgr.get(jid)["result"] == {"ok": True}
