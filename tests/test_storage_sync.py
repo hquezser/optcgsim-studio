@@ -225,3 +225,69 @@ def test_unknown_column_is_rejected_before_reaching_sql(tmp_path):
             s.put("decks", {"profile_id": pid, "name": "X", "leader": "OP01-001",
                             "cards": {}, "tags": [], "name) VALUES ('x'); DROP TABLE decks--": 1})
         assert s.conn.execute("SELECT count(*) FROM decks").fetchone()[0] == 0
+
+
+# ------------------------------------------ convergence à TROIS appareils (desktop + 2 mobiles)
+def test_three_devices_converge_on_the_same_state(tmp_path):
+    """Les tests existants ne couvrent que deux appareils. Le projet vise desktop + iOS +
+    Android : une sémantique LWW peut converger à deux et diverger à trois (l'ordre des
+    synchronisations n'est plus unique)."""
+    distant = FakeRemote()
+    chemins = {n: tmp_path / n / "studio.db" for n in ("a", "b", "c")}
+
+    with LocalStore(chemins["a"]) as a:
+        pid = _mk_profile(a)["id"]
+        _mk_deck(a, pid, name="Commun")
+        synchronize(a, distant)
+    for n in ("b", "c"):
+        with LocalStore(chemins[n]) as s:
+            synchronize(s, distant)
+
+    # chacun modifie DE SON CÔTÉ, dans un ordre entrelacé
+    for n, tag in (("b", "depuis-b"), ("c", "depuis-c"), ("a", "depuis-a")):
+        with LocalStore(chemins[n]) as s:
+            time.sleep(0.02)                       # horodatages distincts (LWW)
+            ligne = next(d for d in s.list("decks") if d["name"] == "Commun")
+            s.put("decks", {**ligne, "tags": [tag]})
+
+    # synchronisation dans un ordre quelconque, deux tours pour propager
+    for _ in range(2):
+        for n in ("c", "a", "b"):
+            with LocalStore(chemins[n]) as s:
+                synchronize(s, distant)
+
+    etats = {}
+    for n in ("a", "b", "c"):
+        with LocalStore(chemins[n]) as s:
+            etats[n] = [(d["name"], tuple(d["tags"])) for d in sorted(
+                s.list("decks"), key=lambda d: d["name"])]
+    assert etats["a"] == etats["b"] == etats["c"], f"divergence : {etats}"
+    assert etats["a"] == [("Commun", ("depuis-a",))], (
+        "le dernier écrivain doit gagner sur les trois appareils")
+
+
+def test_three_devices_converge_on_a_deletion(tmp_path):
+    """Une suppression sur un appareil ne doit pas ressusciter via un troisième."""
+    distant = FakeRemote()
+    chemins = {n: tmp_path / n / "studio.db" for n in ("a", "b", "c")}
+    with LocalStore(chemins["a"]) as a:
+        pid = _mk_profile(a)["id"]
+        deck = _mk_deck(a, pid, name="ASupprimer")
+        synchronize(a, distant)
+    for n in ("b", "c"):
+        with LocalStore(chemins[n]) as s:
+            synchronize(s, distant)
+
+    time.sleep(0.02)
+    with LocalStore(chemins["b"]) as b:          # b supprime
+        b.delete("decks", deck["id"])
+        synchronize(b, distant)
+
+    for _ in range(2):                            # a et c apprennent la suppression
+        for n in ("a", "c", "b"):
+            with LocalStore(chemins[n]) as s:
+                synchronize(s, distant)
+
+    for n in ("a", "b", "c"):
+        with LocalStore(chemins[n]) as s:
+            assert s.list("decks") == [], f"{n} : le deck supprimé est réapparu"
