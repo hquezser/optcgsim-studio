@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import tempfile
 import urllib.error
 import urllib.request
@@ -47,6 +48,16 @@ from ..storage.local import DEFAULT_DB, LocalStore
 from .jobs import JobManager, ProgressReporter
 
 STATIC = Path(__file__).parent / "static"
+
+# Bornes des corps de requête. Le serveur n'écoute que sur 127.0.0.1, mais un `Content-Length`
+# erroné ou un envoi géant ne doit ni saturer la RAM ni remplir le disque en silence.
+MAX_UPLOAD = 2 * 1024 * 1024 * 1024      # 2 Gio — large pour un thème complet, pas illimité
+MAX_JSON_BODY = 8 * 1024 * 1024          # 8 Mio — les corps JSON sont de petits manifestes
+_CHUNK = 1024 * 1024                     # lecture par morceaux : mémoire bornée
+
+
+class _UploadTooLarge(Exception):
+    """Corps de requête au-delà du plafond — répondu en 413, jamais en trace brute."""
 
 
 def _pack_kind(rep) -> str:
@@ -233,17 +244,25 @@ class StudioService:
         self.config.set_default_collection_source(source)
         return {"default_collection_source": self.config.default_collection_source()}
 
-    def add_zip_bytes(self, data: bytes, name: str, on_progress=None) -> dict:
-        tmp = Path(tempfile.mkdtemp(prefix="studio-up-"))
-        zpath = tmp / (re.sub(r"[^\w.-]", "_", name) or "upload.zip")
-        zpath.write_bytes(data)
-        base = re.sub(r"\.zip$", "", name, flags=re.I)
-        return self.add_source(str(zpath), name=re.sub(r"[^\w.-]", "_", base) or "pack",
-                               on_progress=on_progress)
+    def add_zip_path(self, zpath: Path, name: str, on_progress=None) -> dict:
+        """Ingère un zip DÉJÀ écrit sur disque, puis supprime son dossier temporaire.
 
-    def start_upload_job(self, data: bytes, name: str) -> str:
+        Le zip arrive en flux (cf. `do_POST /api/packs/upload`) : il n'est jamais chargé
+        entier en mémoire. Le `finally` est indispensable — `mkdtemp` ne se nettoie pas tout
+        seul, et un thème de plusieurs centaines de Mo restait sinon dans /tmp après chaque
+        import, réussi comme échoué.
+        """
+        zpath = Path(zpath)
+        try:
+            base = re.sub(r"\.zip$", "", name, flags=re.I)
+            return self.add_source(str(zpath), name=re.sub(r"[^\w.-]", "_", base) or "pack",
+                                   on_progress=on_progress)
+        finally:
+            shutil.rmtree(zpath.parent, ignore_errors=True)
+
+    def start_upload_job(self, zpath: Path, name: str) -> str:
         return self.jobs.start(
-            "upload", lambda reporter: self.add_zip_bytes(data, name, reporter))
+            "upload", lambda reporter: self.add_zip_path(zpath, name, reporter))
 
     def job_status(self, job_id: str) -> dict:
         st = self.jobs.get(job_id)
@@ -463,8 +482,44 @@ def make_handler(svc: StudioService):
 
         def _body_json(self) -> dict:
             n = int(self.headers.get("Content-Length", 0))
+            if n > MAX_JSON_BODY:
+                raise _UploadTooLarge(
+                    f"corps JSON de {n} octets — maximum {MAX_JSON_BODY} ; "
+                    "utilise /api/packs/upload pour un fichier.")
             raw = self.rfile.read(n) if n else b""
             return json.loads(raw or b"{}")
+
+        def _recv_upload(self, fname: str) -> Path:
+            """Écrit le corps de la requête dans un fichier temporaire, PAR MORCEAUX.
+
+            Avant : `self.rfile.read(Content-Length)` chargeait le zip entier en mémoire —
+            un thème de 800 Mo faisait grimper le serveur d'autant, et un `Content-Length`
+            mensonger suffisait à le faire gonfler sans limite. Ici la mémoire reste bornée
+            au morceau, quelle que soit la taille annoncée, et on refuse au-delà du plafond.
+            """
+            n = int(self.headers.get("Content-Length", 0))
+            if n > MAX_UPLOAD:
+                raise _UploadTooLarge(
+                    f"envoi de {n / 1048576:.0f} Mo — maximum "
+                    f"{MAX_UPLOAD // 1048576} Mo.")
+            tmp = Path(tempfile.mkdtemp(prefix="studio-up-"))
+            zpath = tmp / (re.sub(r"[^\w.-]", "_", fname) or "upload.zip")
+            recu = 0
+            try:
+                with zpath.open("wb") as f:
+                    while recu < n:
+                        morceau = self.rfile.read(min(_CHUNK, n - recu))
+                        if not morceau:            # client parti en cours de route
+                            break
+                        recu += len(morceau)
+                        if recu > MAX_UPLOAD:
+                            raise _UploadTooLarge(
+                                f"envoi dépassant {MAX_UPLOAD // 1048576} Mo.")
+                        f.write(morceau)
+            except BaseException:
+                shutil.rmtree(tmp, ignore_errors=True)
+                raise
+            return zpath
 
         # -------- garde-fou d'origine
         def _guard_origin(self) -> str | None:
@@ -554,10 +609,12 @@ def make_handler(svc: StudioService):
                         only_types=b.get("only_types"))
                     return self._send(202, {"job_id": jid})
                 if path == "/api/packs/upload":
-                    n = int(self.headers.get("Content-Length", 0))
-                    data = self.rfile.read(n)
                     fname = self.headers.get("X-Filename", "upload.zip")
-                    jid = svc.start_upload_job(data, fname)
+                    try:
+                        zpath = self._recv_upload(fname)
+                    except _UploadTooLarge as e:
+                        return self._send(413, {"error": str(e)})
+                    jid = svc.start_upload_job(zpath, fname)
                     return self._send(202, {"job_id": jid})
                 if path == "/api/packs/update":
                     return self._send(200, {"ok": True, "note": "voir CLI `packs update`"})
@@ -595,6 +652,8 @@ def make_handler(svc: StudioService):
                     b = self._body_json()
                     return self._send(200, svc.resolve_collection(b["source"]))
                 return self._send(404, {"error": "not found"})
+            except _UploadTooLarge as e:
+                return self._send(413, {"error": str(e)})
             except KeyError as e:
                 return self._send(404, {"error": f"introuvable : {e}"})
             except (AssetError, importer.ImportError_, packlib.PackError,

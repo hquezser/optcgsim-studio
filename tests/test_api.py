@@ -655,3 +655,64 @@ def test_import_deckpack_write_failure_does_not_drop_following_decks(svc, tmp_pa
     assert [f["name"] for f in r["failed"]] == ["Maudit"]
     assert "disque plein" in r["failed"][0]["reason"]
     assert {d["name"] for d in svc.decks()} == {"Avant", "Après"}
+
+
+# --------------------------- P15.4 : upload borné en mémoire et dossier temporaire nettoyé
+def test_upload_over_cap_is_refused_with_413(server, monkeypatch):
+    """Un `Content-Length` géant est refusé AVANT toute lecture — la mémoire du serveur ne
+    doit pas suivre la taille annoncée par le client."""
+    from studio.api import server as srv
+    monkeypatch.setattr(srv, "MAX_UPLOAD", 1024)      # plafond minuscule pour le test
+    try:
+        _post(server, "/api/packs/upload", b"x" * 4096, headers={"X-Filename": "Gros.zip"})
+        raise AssertionError("un envoi au-delà du plafond doit être refusé")
+    except urllib.error.HTTPError as e:
+        assert e.code == 413
+        assert "maximum" in json.loads(e.read())["error"]
+
+
+def test_upload_cleans_its_temp_dir(server, svc, tmp_path):
+    """`mkdtemp` ne se nettoie pas tout seul : sans le `finally`, chaque import laissait le
+    zip complet dans /tmp — réussi comme échoué."""
+    import io
+    import tempfile
+    import zipfile
+
+    avant = set(Path(tempfile.gettempdir()).glob("studio-up-*"))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        p = _pack(tmp_path / "z")
+        for f in p.rglob("*"):
+            if f.is_file():
+                zf.write(f, f.relative_to(p))
+    code, r = _post(server, "/api/packs/upload", buf.getvalue(),
+                    headers={"X-Filename": "Propre.zip"})
+    assert code == 202
+    st = _wait_job(server, r["job_id"])
+    assert st["status"] == "done"
+
+    apres = set(Path(tempfile.gettempdir()).glob("studio-up-*"))
+    assert apres <= avant, f"dossiers temporaires laissés derrière : {apres - avant}"
+
+
+def test_upload_temp_dir_cleaned_even_when_ingest_fails(server, svc, tmp_path):
+    """Le nettoyage doit avoir lieu AUSSI quand l'import échoue (zip illisible)."""
+    import tempfile
+    avant = set(Path(tempfile.gettempdir()).glob("studio-up-*"))
+    code, r = _post(server, "/api/packs/upload", b"ceci n'est pas un zip",
+                    headers={"X-Filename": "Casse.zip"})
+    assert code == 202
+    st = _wait_job(server, r["job_id"])
+    assert st["status"] == "error"
+    apres = set(Path(tempfile.gettempdir()).glob("studio-up-*"))
+    assert apres <= avant, f"dossiers temporaires laissés derrière : {apres - avant}"
+
+
+def test_json_body_over_cap_is_refused(server, monkeypatch):
+    from studio.api import server as srv
+    monkeypatch.setattr(srv, "MAX_JSON_BODY", 64)
+    try:
+        _post(server, "/api/packs/add", {"source": "x" * 500})
+        raise AssertionError("un corps JSON au-delà du plafond doit être refusé")
+    except urllib.error.HTTPError as e:
+        assert e.code == 413

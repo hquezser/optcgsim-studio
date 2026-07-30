@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import urllib.error
 from pathlib import Path
 
 from .assets import packlib
 from .assets.manager import AssetError, AssetManager
 from .decks import importer
 from .gamepaths import locate
+from .nettls import CERT_FIX_HINT, is_cert_error
 from .storage.local import DEFAULT_DB, LocalStore
 
 _PHASE_LABEL = {"download": "téléchargement", "extract": "extraction",
@@ -782,6 +784,21 @@ def main(argv=None) -> int:
     except (AssetError, importer.ImportError_, packlib.PackError) as e:
         print(f"Erreur : {e}", file=sys.stderr)
         return 1
+    except urllib.error.URLError as e:
+        # `decks import --url`, `sync`, `packs add` sortaient une trace brute sur une simple
+        # coupure réseau. On donne aussi l'indice cert macOS, comme le fait déjà l'UI.
+        msg = f"Erreur réseau : {e.reason if hasattr(e, 'reason') else e}"
+        if is_cert_error(e):
+            msg += f"\n{CERT_FIX_HINT}"
+        print(msg, file=sys.stderr)
+        return 1
+    except OSError as e:
+        # disque plein, dossier du jeu non écrivable, chemin inexistant…
+        print(f"Erreur système : {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\nInterrompu.", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":
