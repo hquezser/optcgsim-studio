@@ -217,6 +217,16 @@
 
 <script>
 const $ = s => document.querySelector(s);
+
+/** Échappe une valeur TIERCE avant interpolation dans du HTML (texte ou attribut entre
+ *  guillemets). Les noms de packs, de decks et les libellés de collection viennent de zips
+ *  communautaires, de `deckpack.json` et de `collection.json` distants : sans ça, un nom
+ *  contenant du balisage s'exécute dans l'origine de l'UI, qui a un accès complet à l'API
+ *  locale (appliquer des packs au jeu, remplacer le token GitHub…). L'apostrophe est
+ *  échappée aussi : « Luffy's alt art » cassait déjà l'affichage. */
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
 async function api(path, opts){
   const r = await fetch('/api'+path, opts);
   const j = await r.json().catch(()=>({error:'réponse illisible'}));
@@ -231,7 +241,7 @@ function toast(msg, err){
 async function loadStatus(){
   const inv = await api('/inventory');
   $('#status').innerHTML =
-    `<span><span class="dot ${inv.verified?'ok':'no'}"></span>${inv.os}${inv.verified?'':' (non vérifié)'}</span>`
+    `<span><span class="dot ${inv.verified?'ok':'no'}"></span>${esc(inv.os)}${inv.verified?'':' (non vérifié)'}</span>`
     +`<span><b>${inv.card_sets.length}</b> sets · <b>${inv.playmats.length}</b> tapis</span>`
     +`<span><b>${inv.active_swaps}</b> swaps actifs</span>`;
 }
@@ -246,24 +256,36 @@ async function loadPacks(){
     return;
   }
   el.innerHTML = packs.map(p=>`
-    <div class="pack" data-name="${p.name}">
+    <div class="pack" data-name="${esc(p.name)}">
       <div class="top">
-        <input type="checkbox" class="pack-select" value="${p.name}" style="width:auto">
-        <span class="name">${p.name}</span>
-        <span class="tag">${p.kind}</span>
-        ${p.applied?`<span class="tag applied">✓ appliqué (${p.applied})</span>`:''}
+        <input type="checkbox" class="pack-select" value="${esc(p.name)}" style="width:auto">
+        <span class="name">${esc(p.name)}</span>
+        <span class="tag">${esc(p.kind)}</span>
+        ${p.applied?`<span class="tag applied">✓ appliqué (${esc(p.applied)})</span>`:''}
         ${p.followed?`<span class="tag follow">suivi</span>`:''}
       </div>
       <div class="meta">${p.cards} cartes · ${p.present_in_install} cibles présentes dans le jeu
         ${p.translation?' · traduction':''}${p.unclassified?` · ${p.unclassified} non classés`:''}</div>
       <div class="actions">
-        <button class="mini" onclick="apply('${p.name}',this)">Appliquer</button>
-        <button class="mini ghost" onclick="coverage('${p.name}',this)">Couverture de mes decks</button>
-        <button class="mini ghost" onclick="remove('${p.name}')">Restaurer / retirer</button>
+        <button class="mini" data-act="apply">Appliquer</button>
+        <button class="mini ghost" data-act="coverage">Couverture de mes decks</button>
+        <button class="mini ghost" data-act="remove">Restaurer / retirer</button>
       </div>
       <div class="cov"></div>
     </div>`).join('');
 }
+
+// Délégation : le nom du pack est lu dans `data-name` au CLIC, jamais injecté dans du code.
+// Supprime la classe entière du problème — un `onclick="apply('${nom}')"` reste vulnérable à
+// la moindre erreur d'échappement, alors qu'ici le nom ne traverse jamais un parseur JS.
+$('#packs').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-act]');
+  if(!btn) return;
+  const name = btn.closest('.pack').dataset.name;
+  ({apply: () => apply(name, btn),
+    coverage: () => coverage(name, btn),
+    remove: () => remove(name)})[btn.dataset.act]?.();
+});
 
 function toggleAllPacks(checked){
   document.querySelectorAll('.pack-select').forEach(c => c.checked = checked);
@@ -289,7 +311,7 @@ async function removeSelectedPacks(){
 function deckBadge(source){
   if(!source || source === 'ui' || source === 'clipboard') return '';
   if(source === 'sim') return `<span class="tag">jeu</span>`;
-  if(source.startsWith('deckpack:')) return `<span class="tag">pack : ${source.slice(9)}</span>`;
+  if(source.startsWith('deckpack:')) return `<span class="tag">pack : ${esc(source.slice(9))}</span>`;
   if(/^https?:\/\//.test(source)) return `<span class="tag">lien</span>`;
   return '';
 }
@@ -305,15 +327,20 @@ async function loadDecks(){
   }
   el.innerHTML = decks.map(d=>{
     const n = Object.values(d.cards).reduce((a,b)=>a+b,0);
-    return `<div class="deck" data-id="${d.id}">
-      <input type="checkbox" class="deck-select" value="${d.id}" style="width:auto">
-      <span class="l">${d.name}</span>
-      <span class="adv">${d.leader} · ${n} cartes${d.tags.length?' · '+d.tags.join(', '):''}</span>
+    return `<div class="deck" data-id="${esc(d.id)}">
+      <input type="checkbox" class="deck-select" value="${esc(d.id)}" style="width:auto">
+      <span class="l">${esc(d.name)}</span>
+      <span class="adv">${esc(d.leader)} · ${n} cartes${d.tags.length?' · '+esc(d.tags.join(', ')):''}</span>
       ${deckBadge(d.source)}
-      <button class="mini ghost" style="margin-left:auto" onclick="removeDeck('${d.id}')">Retirer</button>
+      <button class="mini ghost" style="margin-left:auto" data-act="remove-deck">Retirer</button>
     </div>`;
   }).join('');
 }
+
+$('#decks').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-act="remove-deck"]');
+  if(btn) removeDeck(btn.closest('.deck').dataset.id);
+});
 
 async function syncFromSim(){
   try{
@@ -395,7 +422,7 @@ function renderActivity(){
     const pct = j.total ? Math.round(100*j.done/j.total) : null;
     const text = j.total ? `${label}… ${j.done}/${j.total}${pct!==null?` (${pct}%)`:''}` : `${label}…`;
     return `<div class="job">
-      <div class="l"><b><span class="spin"></span>${j.label}</b><span>${text}</span></div>
+      <div class="l"><b><span class="spin"></span>${esc(j.label)}</b><span>${esc(text)}</span></div>
       <div class="bar"><i style="width:${pct??8}%"></i></div>
     </div>`;
   }).join('');
@@ -509,24 +536,24 @@ function renderCollection(col){
     else standalone.push(p);
   }
   let html = `<div class="pack">
-    <div class="top"><span class="name">${col.name}</span>
+    <div class="top"><span class="name">${esc(col.name)}</span>
       <span class="tag">${col.packs.length} pack(s)</span></div>`;
   if(col.warnings && col.warnings.length)
-    html += col.warnings.map(w => `<div class="hint">⚠ ${w}</div>`).join('');
+    html += col.warnings.map(w => `<div class="hint">⚠ ${esc(w)}</div>`).join('');
   for(const [group, packs] of Object.entries(groups)){
-    html += `<div class="meta" style="margin:10px 0 4px"><b>${group}</b> — un seul choix</div>`;
+    html += `<div class="meta" style="margin:10px 0 4px"><b>${esc(group)}</b> — un seul choix</div>`;
     html += packs.map((p, i) => `
       <label style="display:flex;align-items:center;gap:6px;margin:3px 0">
-        <input type="radio" name="col-group-${group}" value="${p.url}"
-               ${i === 0 ? 'checked' : ''} style="width:auto"> ${p.label}
+        <input type="radio" name="col-group-${esc(group)}" value="${esc(p.url)}"
+               ${i === 0 ? 'checked' : ''} style="width:auto"> ${esc(p.label)}
       </label>`).join('');
   }
   if(standalone.length){
     html += `<div class="meta" style="margin:10px 0 4px"><b>Compléments</b></div>`;
     html += standalone.map(p => `
       <label style="display:flex;align-items:center;gap:6px;margin:3px 0">
-        <input type="checkbox" class="col-standalone" value="${p.url}" checked
-               style="width:auto"> ${p.label}
+        <input type="checkbox" class="col-standalone" value="${esc(p.url)}" checked
+               style="width:auto"> ${esc(p.label)}
       </label>`).join('');
   }
   html += `<div class="actions" style="margin-top:12px">
@@ -672,7 +699,7 @@ async function coverage(name, btn){
     if(!c.decks.length){ box.innerHTML='<div class="empty">Importe un deck pour voir la couverture.</div>'; }
     else box.innerHTML = c.decks.map(d=>`
       <div class="covrow">
-        <div class="l"><b>${d.deck}</b><span>${d.covered}/${d.total} cartes · ${d.pct}%</span></div>
+        <div class="l"><b>${esc(d.deck)}</b><span>${d.covered}/${d.total} cartes · ${d.pct}%</span></div>
         <div class="bar"><i style="width:${d.pct}%"></i></div>
       </div>`).join('');
     box.classList.add('show');
@@ -721,7 +748,7 @@ $('#src').addEventListener('input', ()=>{clearTimeout(previewTimer);
 document.querySelectorAll('.f-type, .f-cat').forEach(
   c=>c.addEventListener('change', refreshPreview));
 
-loadStatus().catch(e=>$('#status').innerHTML=`<span style="color:var(--accent)">${e.message}</span>`);
+loadStatus().catch(e=>$('#status').innerHTML=`<span style="color:var(--accent)">${esc(e.message)}</span>`);
 loadPacks(); loadDecks(); loadTokenState();
 autoloadDefaultCollection();   // P12 : auto-analyse la collection par défaut si définie
 resumeJobs();   // reprend l'affichage des jobs encore en cours après un rechargement de page
