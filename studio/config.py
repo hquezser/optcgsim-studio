@@ -47,9 +47,13 @@ class Config:
     # ------------------------------------------------------------ token GitHub
     def github_token(self) -> str | None:
         """Token effectif : variable d'environnement (prioritaire), sinon config.json."""
-        env = os.environ.get(ENV_TOKEN)
+        # On teste la valeur APRÈS nettoyage : une variable définie mais vide (ou ne contenant
+        # que des espaces — cas courant d'un `export OPTCG_STUDIO_GITHUB_TOKEN=` traînant dans
+        # un shell) masquait le token du fichier et faisait échouer les dépôts privés avec un
+        # message d'authentification incompréhensible. Vide = « non définie ».
+        env = (os.environ.get(ENV_TOKEN) or "").strip()
         if env:
-            return env.strip() or None
+            return env
         tok = self._read().get("github_token")
         return tok.strip() if isinstance(tok, str) and tok.strip() else None
 

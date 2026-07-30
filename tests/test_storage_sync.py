@@ -208,3 +208,20 @@ def test_concurrent_writers_do_not_raise_database_is_locked(tmp_path):
     assert erreurs == [], f"écritures concurrentes en échec : {erreurs[:3]}"
     with LocalStore(db) as s:
         assert len(s.list("decks")) == 72
+
+
+# ---------------------------------------- P17.7 : les noms de colonnes viennent du schéma
+def test_unknown_column_is_rejected_before_reaching_sql(tmp_path):
+    """`put()` interpole les noms de colonnes dans le SQL — impossible de les paramétrer.
+    Le nom de table venait déjà d'une liste blanche ; les colonnes, elles, venaient des clés
+    du dict de l'appelant."""
+    with LocalStore(tmp_path / "studio.db") as s:
+        pid = _mk_profile(s)["id"]
+        with pytest.raises(ValueError, match="Colonne"):
+            s.put("decks", {"profile_id": pid, "name": "X", "leader": "OP01-001",
+                            "cards": {}, "tags": [], "colonne_inventee": 1})
+        # injection tentée via une clé : refusée avant d'atteindre SQL
+        with pytest.raises(ValueError, match="Colonne"):
+            s.put("decks", {"profile_id": pid, "name": "X", "leader": "OP01-001",
+                            "cards": {}, "tags": [], "name) VALUES ('x'); DROP TABLE decks--": 1})
+        assert s.conn.execute("SELECT count(*) FROM decks").fetchone()[0] == 0

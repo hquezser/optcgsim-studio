@@ -54,6 +54,7 @@ class LocalStore:
         self.conn.executescript(_SCHEMA.read_text())
         self.device_id = _device_id(db_path.parent)
         self.corrupt: list[str] = []      # enregistrements sautés par `list()`, pour rapport
+        self._colonnes: dict[str, set[str]] = {}   # cache des colonnes réelles par table
 
     def __enter__(self):
         return self
@@ -67,6 +68,24 @@ class LocalStore:
     def _check_entity(entity: str) -> None:
         if entity not in ENTITIES:
             raise ValueError(f"Entité inconnue : {entity}")
+
+    def _check_columns(self, entity: str, record: dict) -> None:
+        """Vérifie que chaque clé correspond à une VRAIE colonne de la table.
+
+        `put()` interpole les noms de colonnes dans le SQL (impossible de les paramétrer) :
+        le nom de table vient d'une liste blanche, mais les colonnes venaient des clés du
+        dict de l'appelant. Une clé inattendue produisait au mieux un `OperationalError`
+        cryptique, au pire du SQL arbitraire si un jour un appelant relayait des clés
+        d'origine externe. Le schéma fait autorité.
+        """
+        connues = self._colonnes.get(entity)
+        if connues is None:
+            connues = {r[1] for r in self.conn.execute(f"PRAGMA table_info({entity})")}
+            self._colonnes[entity] = connues
+        inconnues = set(record) - connues
+        if inconnues:
+            raise ValueError(
+                f"Colonne(s) inconnue(s) pour « {entity} » : {sorted(inconnues)}")
 
     def _decode(self, entity: str, row: sqlite3.Row) -> dict:
         """Décode les colonnes JSON. Lève `CorruptRecord` si l'une est illisible.
@@ -127,6 +146,7 @@ class LocalStore:
         rec.setdefault("deleted", 0)
         rec.setdefault("dirty", 0 if from_sync else 1)
         enc = self._encode(entity, rec)
+        self._check_columns(entity, enc)
         cols = ", ".join(enc)
         marks = ", ".join("?" * len(enc))
         self.conn.execute(

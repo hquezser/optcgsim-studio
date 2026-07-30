@@ -50,14 +50,28 @@ class RemoteFile:
 
 
 # --------------------------------------------------------------------------- GitHub
-_GH_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+?)(?:\.git)?(?:/tree/([^/]+))?/?$")
+# Le `(?:/(.*))?` final accepte une URL pointant sur un SOUS-DOSSIER — exactement ce que l'on
+# copie depuis GitHub après avoir navigué dans le dépôt (…/tree/main/Cards/OP01). Sans lui, ces
+# URL n'étaient pas reconnues comme GitHub : l'exploration sélective était abandonnée et le
+# dépôt ENTIER téléchargé en zip, perdant l'économie de bande passante qui justifie ce module.
+_GH_RE = re.compile(
+    r"^https://github\.com/([^/]+)/([^/]+?)(?:\.git)?(?:/tree/([^/]+)(?:/(.*))?)?/?$")
 
 
 def _gh_parts(url: str) -> tuple[str, str, str] | None:
+    """(propriétaire, dépôt, branche). Un éventuel sous-dossier dans l'URL est accepté mais
+    pas retourné : le périmètre se règle par `--path-prefix`, et reconnaître l'URL suffit à
+    garder le fetch sélectif au lieu de retomber sur le zip complet du dépôt."""
     m = _GH_RE.match(url.strip())
     if not m:
         return None
     return m.group(1), m.group(2), (m.group(3) or "main")
+
+
+def gh_subpath(url: str) -> str | None:
+    """Sous-dossier ciblé par une URL GitHub, s'il y en a un (« Cards/OP01 »)."""
+    m = _GH_RE.match(url.strip())
+    return (m.group(4) or None) if m else None
 
 
 def _is_rate_limited(e: urllib.error.HTTPError) -> bool:

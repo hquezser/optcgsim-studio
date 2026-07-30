@@ -90,3 +90,19 @@ def test_default_collection_source_coexists_with_token(cfg):
     # clairement pas un secret : PAS soumis au même traitement chmod-only-relevant
     data = json.loads(cfg.path.read_text())
     assert data["default_collection_source"] == "/tmp/collection.json"
+
+
+# ------------------------------------------- P17.1 : variable d'environnement vide ≠ définie
+def test_blank_env_token_does_not_mask_the_configured_one(tmp_path, monkeypatch):
+    """Un `export OPTCG_STUDIO_GITHUB_TOKEN=` traînant dans un shell masquait le token du
+    fichier : les dépôts privés échouaient avec un message d'authentification incompréhensible
+    alors que le token était bien configuré."""
+    from studio.config import ENV_TOKEN, Config
+    cfg = Config(state_dir=tmp_path)
+    cfg.set_github_token("ghp_du_fichier")
+    for valeur_vide in ("", "   ", "\t\n"):
+        monkeypatch.setenv(ENV_TOKEN, valeur_vide)
+        assert cfg.github_token() == "ghp_du_fichier", (
+            f"une variable vide ({valeur_vide!r}) doit être traitée comme non définie")
+    monkeypatch.setenv(ENV_TOKEN, "  ghp_de_l_env  ")
+    assert cfg.github_token() == "ghp_de_l_env", "une valeur réelle reste prioritaire"

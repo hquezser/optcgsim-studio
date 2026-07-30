@@ -238,6 +238,13 @@ def read_clipboard() -> str:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
     except FileNotFoundError as e:
         raise ImportError_(f"Outil presse-papiers absent : {cmd[0]}") from e
+    except subprocess.TimeoutExpired as e:
+        # `timeout=5` était posé mais son exception jamais traitée : un outil bloqué
+        # (session X sans presse-papiers, xclip qui attend un propriétaire de sélection)
+        # sortait en trace brute au lieu d'un message actionnable.
+        raise ImportError_(
+            f"Le presse-papiers n'a pas répondu en 5 s ({cmd[0]}). "
+            "Colle plutôt la decklist directement.") from e
     return out.stdout
 
 

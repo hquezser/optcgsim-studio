@@ -151,3 +151,21 @@ def test_fetch_selected_large_file_falls_back_to_download_url(monkeypatch, tmp_p
 def test_fetch_selected_non_github_raises(tmp_path):
     with pytest.raises(sf.FetchError, match="non explorable"):
         sf.fetch_selected("https://dropbox.com/x", ["a.png"], tmp_path)
+
+
+# ------------------------------- P17.3 : URL pointant sur un sous-dossier du dépôt
+def test_subfolder_url_is_still_recognised_as_github():
+    """C'est l'URL qu'on copie après avoir navigué dans un dépôt sur github.com.
+
+    Non reconnue, elle faisait abandonner l'exploration sélective et télécharger le dépôt
+    ENTIER en zip — exactement l'économie que ce module existe pour obtenir.
+    """
+    from studio.assets.sourcefetch import _gh_parts, gh_subpath
+    assert _gh_parts("https://github.com/o/r/tree/main/Cards/OP01") == ("o", "r", "main")
+    assert gh_subpath("https://github.com/o/r/tree/main/Cards/OP01") == "Cards/OP01"
+    # les formes déjà supportées ne régressent pas
+    assert _gh_parts("https://github.com/o/r") == ("o", "r", "main")
+    assert _gh_parts("https://github.com/o/r/tree/dev") == ("o", "r", "dev")
+    assert _gh_parts("https://github.com/o/r.git") == ("o", "r", "main")
+    assert gh_subpath("https://github.com/o/r/tree/main") is None
+    assert _gh_parts("https://gitlab.com/o/r") is None
