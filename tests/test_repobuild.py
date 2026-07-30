@@ -793,3 +793,53 @@ def test_interrupted_manifest_write_leaves_previous_intact(tmp_path, monkeypatch
 
     assert manifest.read_text() == avant, "l'ancien manifeste doit être intact"
     assert json.loads(manifest.read_text())            # et toujours du JSON valide
+
+
+# ------------------------------------- P15.6 : le dossier de travail ne reste pas sur le disque
+def test_build_cleans_its_work_dir(tmp_path):
+    """`.work` contient le contenu TÉLÉCHARGÉ de chaque source — des dépôts d'images, donc
+    facilement plusieurs Go. Il n'était jamais supprimé, et invisible car gitignoré."""
+    src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
+    out = tmp_path / "out"
+
+    def ingest_realiste(s, wd, on_progress=None, token=None):
+        """Comme le vrai `packlib.ingest` : il EXTRAIT dans le dossier de travail.
+        Une doublure qui n'écrit pas dans `wd` ne reproduit pas la fuite — vérifié."""
+        wd = Path(wd)
+        wd.mkdir(parents=True, exist_ok=True)
+        (wd / "telechargement.bin").write_bytes(b"x" * 4096)
+        return src
+
+    repobuild.build(["s"], out, ingest=ingest_realiste, git_init=False)
+    assert not (out / ".work").exists(), "le dossier de travail doit être nettoyé"
+    assert (out / "cards-alt" / "MANIFEST.json").is_file(), "le build a bien produit"
+
+
+def test_build_cleans_its_work_dir_even_on_failure(tmp_path):
+    """Un build interrompu à mi-course laissait tout le téléchargement derrière lui."""
+    out = tmp_path / "out"
+
+    def ingest_qui_echoue(s, wd, on_progress=None, token=None):
+        Path(wd).mkdir(parents=True, exist_ok=True)
+        (Path(wd) / "gros_telechargement.bin").write_bytes(b"x" * 4096)
+        raise OSError("coupure réseau à mi-course")
+
+    with pytest.raises(OSError):
+        repobuild.build(["s"], out, ingest=ingest_qui_echoue, git_init=False)
+    assert not (out / ".work").exists(), "nettoyage requis AUSSI en cas d'échec"
+
+
+def test_build_does_not_delete_a_work_dir_it_was_given(tmp_path):
+    """Si l'appelant impose son dossier de travail, il en reste propriétaire."""
+    src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
+    impose = tmp_path / "a_moi"
+    impose.mkdir()
+    (impose / "temoin.txt").write_text("ne pas supprimer")
+
+    def ingest_realiste(s, wd, on_progress=None, token=None):
+        Path(wd).mkdir(parents=True, exist_ok=True)
+        return src
+
+    repobuild.build(["s"], tmp_path / "out", work_dir=impose, git_init=False,
+                    ingest=ingest_realiste)
+    assert (impose / "temoin.txt").exists(), "un work_dir imposé ne doit pas être supprimé"

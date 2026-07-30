@@ -276,49 +276,60 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
     Enregistre la configuration dans `<out_dir>/.repos-build.json` pour `update()`."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Si l'appelant n'impose pas de dossier de travail, on en crée un ET on le nettoie :
+    # il contient le contenu TÉLÉCHARGÉ de chaque source (des dépôts d'images, donc
+    # facilement plusieurs Go). Il n'était jamais supprimé — chaque `repos build` laissait
+    # une copie complète dans `<out>/.work`, invisible car gitignorée.
+    work_dir_impose = work_dir is not None
     work_dir = Path(work_dir or (out_dir / ".work"))
     rep = RepoBuildReport(out_dir=out_dir, sources=list(sources))
     written: dict[str, dict[str, str]] = {}   # family -> {rel: sha1}, CE run uniquement
     prefix = path_prefix.strip("/\\").replace("\\", "/") if path_prefix else None
 
-    for si, src in enumerate(sources):
-        root = _ingest_scoped(src, work_dir / f"src{si}", prefix, token, ingest, on_progress)
-        for f in _iter_files(root):
-            rel = f.relative_to(root)
-            rel_str = str(rel).replace("\\", "/")
-            cat, cid = packlib.classify_rel(rel_str)
-            # le préfixe ne scope QUE les catégories à risque de collision de variante
-            # (cards/don, canonicalisées par id) ; le reste (traduction, tapis, dos…) est un
-            # asset partagé, hors du problème que --path-prefix résout, donc toujours inclus —
-            # sinon un TRANSLATION.txt à la racine serait exclu par CHAQUE build scopé. (Si le
-            # fetch sélectif ci-dessus a déjà tourné, ce test est un no-op — tout ce qui est
-            # sur disque est déjà dans le périmètre.)
-            if not _in_prefix_scope(rel_str, cat, prefix):
-                rep.excluded_by_prefix += 1
-                continue
-            fam, target_rel = route(cat, cid, f.name, cards_as, split_cards_by_type, lang)
-            if fam is None:
-                rep.unclassified.append({"source": src, "path": rel_str})
-                continue
-            fam_written = written.setdefault(fam, {})
-            if target_rel in fam_written:
-                rep.collisions.append({"repo": fam, "rel": target_rel})
-            dest = out_dir / fam / target_rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(f, dest)
-            fam_written[target_rel] = hashlib.sha1(dest.read_bytes()).hexdigest()
+    try:
+        for si, src in enumerate(sources):
+            root = _ingest_scoped(src, work_dir / f"src{si}", prefix, token, ingest, on_progress)
+            for f in _iter_files(root):
+                rel = f.relative_to(root)
+                rel_str = str(rel).replace("\\", "/")
+                cat, cid = packlib.classify_rel(rel_str)
+                # le préfixe ne scope QUE les catégories à risque de collision de variante
+                # (cards/don, canonicalisées par id) ; le reste (traduction, tapis, dos…) est un
+                # asset partagé, hors du problème que --path-prefix résout, donc toujours inclus —
+                # sinon un TRANSLATION.txt à la racine serait exclu par CHAQUE build scopé. (Si le
+                # fetch sélectif ci-dessus a déjà tourné, ce test est un no-op — tout ce qui est
+                # sur disque est déjà dans le périmètre.)
+                if not _in_prefix_scope(rel_str, cat, prefix):
+                    rep.excluded_by_prefix += 1
+                    continue
+                fam, target_rel = route(cat, cid, f.name, cards_as, split_cards_by_type, lang)
+                if fam is None:
+                    rep.unclassified.append({"source": src, "path": rel_str})
+                    continue
+                fam_written = written.setdefault(fam, {})
+                if target_rel in fam_written:
+                    rep.collisions.append({"repo": fam, "rel": target_rel})
+                dest = out_dir / fam / target_rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, dest)
+                fam_written[target_rel] = hashlib.sha1(dest.read_bytes()).hexdigest()
 
-    for fam, files in written.items():
-        stat = rep.repos.setdefault(fam, RepoStat(family=fam))
-        stat.files = len(files)
-        stat.bytes = sum((out_dir / fam / rel).stat().st_size for rel in files)
-        stat.by_type = _by_type_from_written(files)
-        _finalize_repo(out_dir / fam, stat, rep.sources, git_init, files)
-        _upsert_collection_entry(out_dir, fam, collection_label, collection_group)
+        for fam, files in written.items():
+            stat = rep.repos.setdefault(fam, RepoStat(family=fam))
+            stat.files = len(files)
+            stat.bytes = sum((out_dir / fam / rel).stat().st_size for rel in files)
+            stat.by_type = _by_type_from_written(files)
+            _finalize_repo(out_dir / fam, stat, rep.sources, git_init, files)
+            _upsert_collection_entry(out_dir, fam, collection_label, collection_group)
 
-    _record_build(out_dir, sources, cards_as, split_cards_by_type, path_prefix, lang,
-                 collection_label, collection_group)
-    return rep
+        _record_build(out_dir, sources, cards_as, split_cards_by_type, path_prefix, lang,
+                     collection_label, collection_group)
+        return rep
+    finally:
+        # Nettoyage systématique : succès COMME échec. Un build interrompu à mi-course
+        # laissait sinon la totalité du téléchargement sur le disque.
+        if not work_dir_impose:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def update(out_dir: Path, *, token: str | None = None, work_dir: Path | None = None,
