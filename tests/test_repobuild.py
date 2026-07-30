@@ -758,3 +758,33 @@ def test_collection_file_is_visible_not_hidden(tmp_path):
                     git_init=False)
     assert (out / "collection.json").exists()
     assert not (out / "collection.json").name.startswith(".")
+
+
+# ------------------------------------------------ P15.5 : écritures JSON atomiques
+def test_interrupted_manifest_write_leaves_previous_intact(tmp_path, monkeypatch):
+    """Une écriture interrompue ne doit JAMAIS laisser un JSON tronqué.
+
+    Ces fichiers sont relus au build suivant pour calculer le delta : tronqués, ils sont
+    illisibles en JSON et le build d'après repart de zéro en signalant tous les fichiers
+    comme « ajoutés ». Régression tournée vers l'avenir : elle verrouille le motif
+    tmp + `os.replace` déjà utilisé par `manager._swap` et `config`.
+    """
+    src = tmp_path / "src"
+    make_png(src / "Cards" / "OP01" / "OP01-001.png")
+    out = tmp_path / "out"
+    repobuild.build(["s"], out, ingest=lambda s, wd, on_progress=None, token=None: src,
+                    git_init=False)
+    manifest = out / "cards-alt" / "MANIFEST.json"
+    avant = manifest.read_text()
+    assert json.loads(avant)["file_count"] == 1
+
+    # deuxième build : la bascule finale échoue (disque plein, coupure…)
+    def replace_qui_echoue(a, b):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(repobuild.os, "replace", replace_qui_echoue)
+    with pytest.raises(OSError):
+        repobuild.build(["s"], out, ingest=lambda s, wd, on_progress=None, token=None: src,
+                        git_init=False)
+
+    assert manifest.read_text() == avant, "l'ancien manifeste doit être intact"
+    assert json.loads(manifest.read_text())            # et toujours du JSON valide

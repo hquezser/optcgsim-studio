@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -373,8 +374,22 @@ def _record_build(out_dir: Path, sources: list[str], cards_as: str, split_cards_
                     "path_prefix": path_prefix, "lang": lang,
                     "collection_label": collection_label,
                     "collection_group": collection_group})
-    path.write_text(json.dumps(entries, indent=2, ensure_ascii=False))
+    _write_json_atomic(path, entries)
 
+
+
+def _write_json_atomic(path: Path, data) -> None:
+    """Écrit un JSON via fichier temporaire + `os.replace` — jamais de fichier à moitié écrit.
+
+    Ces trois fichiers (état de build, collection.json, manifeste de dépôt) sont relus au
+    build SUIVANT pour calculer le delta. Une écriture interrompue (Ctrl-C, disque plein,
+    coupure) les laissait tronqués, donc illisibles en JSON : le build d'après repartait de
+    zéro et signalait tous les fichiers comme « ajoutés ». Même garantie que `manager._swap`
+    et `config`, qui utilisent déjà ce motif.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    os.replace(tmp, path)
 
 def _upsert_collection_entry(out_dir: Path, family: str, label: str | None,
                              group: str | None) -> None:
@@ -395,7 +410,7 @@ def _upsert_collection_entry(out_dir: Path, family: str, label: str | None,
     packs.append({"family": family, "url": url, "label": label or family,
                  "variant_group": group})
     data["packs"] = packs
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    _write_json_atomic(path, data)
 
 
 _README = """# {fam} — dépôt d'images OPTCGSim (généré)
@@ -431,11 +446,11 @@ def _finalize_repo(repo_dir: Path, stat: RepoStat, sources: list[str], git_init:
     stat.changed = sorted(r for r in files if r in old_files and old_files[r] != files[r])
     stat.orphans = sorted(set(old_files) - set(files))
 
-    manifest_path.write_text(json.dumps({
+    _write_json_atomic(manifest_path, {
         "family": stat.family, "generated_by": "optcgsim-studio repos build",
         "file_count": stat.files, "bytes": stat.bytes, "by_type": stat.by_type,
         "sources": sources, "files": files,
-    }, indent=2, ensure_ascii=False))
+    })
     (repo_dir / "README.md").write_text(_README.format(fam=stat.family, n=len(sources)))
     if git_init:
         gi = repo_dir / ".gitignore"
