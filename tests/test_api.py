@@ -716,3 +716,27 @@ def test_json_body_over_cap_is_refused(server, monkeypatch):
         raise AssertionError("un corps JSON au-delà du plafond doit être refusé")
     except urllib.error.HTTPError as e:
         assert e.code == 413
+
+
+# ------------------------------------------- P16.1 : /api/packs ne hache plus les fichiers
+def test_packs_reports_applied_count_without_hashing_any_file(svc, tmp_path, monkeypatch):
+    """L'UI n'affiche qu'un COMPTE de fichiers appliqués par pack.
+
+    Avant, `packs()` passait par `status()`, qui calcule 1 à 2 SHA-1 par fichier swappé pour
+    déterminer un état ensuite jeté : ~1 Go haché et 455 ms mesurés sur une collection
+    complète, à chaque chargement de page et après chaque action.
+    """
+    svc.add_source(str(_pack(tmp_path / "src")), name="Theme")
+    svc.apply("Theme")
+
+    from studio.assets import manager as mgr_mod
+    appels = []
+    vrai_sha1 = mgr_mod._sha1
+    monkeypatch.setattr(mgr_mod, "_sha1",
+                        lambda p: appels.append(p) or vrai_sha1(p))
+
+    packs = svc.packs()
+
+    assert packs[0]["name"] == "Theme"
+    assert packs[0]["applied"] >= 1, "le compte doit rester juste"
+    assert appels == [], f"aucun fichier ne doit être haché, or : {appels}"

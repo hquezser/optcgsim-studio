@@ -428,6 +428,22 @@ class AssetManager:
         return counts
 
     # ------------------------------------------------------------ statut / restauration
+    def applied_counts(self) -> dict[str, int]:
+        """Nombre de fichiers swappés PAR SOURCE, sans lire ni hacher aucun fichier.
+
+        `status()` calcule 1 à 2 SHA-1 par entrée pour déterminer l'état exact de chaque
+        swap ; l'UI, elle, n'affiche qu'un COMPTE par pack. Sur une collection complète
+        (~3 480 fichiers), passer par `status()` faisait hacher ~1 Go à chaque
+        `GET /api/packs` — mesuré à 455 ms, à chaque chargement de page et après chaque
+        action. Le manifeste suffit : il porte déjà la source.
+        """
+        out: dict[str, int] = {}
+        for e in self._manifest.values():
+            src = e.get("source") or ""
+            if src:
+                out[src] = out.get(src, 0) + 1
+        return out
+
     def status(self) -> list[dict]:
         """État de chaque swap : intact, écrasé par une màj du sim, ou restauré à la main."""
         out = []

@@ -93,12 +93,11 @@ class StudioService:
         return self.mgr.inventory()
 
     def packs(self) -> list[dict]:
-        status = self.mgr.status()
-        applied: dict[str, int] = {}
-        for s in status:
-            src = s.get("source", "")
-            if src.startswith("pack:"):
-                applied[src[5:]] = applied.get(src[5:], 0) + 1
+        # `applied_counts()` et non `status()` : on n'a besoin QUE du compte par pack, et
+        # `status()` hache chaque fichier swappé (~1 Go, 455 ms mesurés sur une collection
+        # complète) pour une information qu'on jette ensuite.
+        applied = {src[5:]: n for src, n in self.mgr.applied_counts().items()
+                   if src.startswith("pack:")}
         with self._store() as store:
             out = []
             for p in store.list("cosmetic_packs"):
