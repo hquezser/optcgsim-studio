@@ -147,3 +147,64 @@ def test_les_modules_principaux_s_importent_sans_effet_de_bord(module):
     """
     import importlib
     importlib.import_module(module)
+
+
+def test_tout_le_code_respecte_la_grammaire_de_la_version_minimale():
+    """`requires-python = ">=3.10"` doit être VRAI, pas une intention.
+
+    Le projet se développe sur une version récente : une syntaxe trop neuve casserait
+    l'installation sur 3.10 par une `SyntaxError` à l'import, sans message utile.
+    `feature_version` la rejette sans avoir besoin d'un interpréteur 3.10 sous la main.
+
+    PORTÉE RÉELLE, vérifiée : attrape `except*` (3.11), `type X = …` et les génériques
+    PEP 695 (3.12). N'attrape PAS les changements de TOKENISATION des f-strings (PEP 701),
+    car la tokenisation précède le contrôle de version de grammaire — d'où le test
+    complémentaire ci-dessous, qui couvre précisément ce cas.
+    """
+    import re
+    contrainte = re.search(r'requires-python\s*=\s*"[^0-9]*(\d+)\.(\d+)"',
+                           (RACINE / "pyproject.toml").read_text())
+    assert contrainte, "requires-python illisible dans pyproject.toml"
+    minimale = (int(contrainte.group(1)), int(contrainte.group(2)))
+
+    echecs = []
+    fichiers = _fichiers_du_paquet() + sorted(
+        p for p in (RACINE / "tests").rglob("*.py") if "__pycache__" not in p.parts)
+    for fichier in fichiers:
+        try:
+            ast.parse(fichier.read_text(), filename=str(fichier), feature_version=minimale)
+        except SyntaxError as e:
+            echecs.append(f"{fichier.relative_to(RACINE)}:{e.lineno} — {e.msg}")
+
+    assert not echecs, (
+        f"syntaxe trop récente pour Python {minimale[0]}.{minimale[1]}, "
+        f"pourtant annoncé supporté :\n" + "\n".join(echecs))
+
+
+def test_pas_d_antislash_dans_une_expression_de_f_string():
+    """Complète le test précédent sur le seul angle mort qu'il a : PEP 701.
+
+    `f"{'\\n'.join(x)}"` ne compile qu'à partir de Python 3.12. `ast.parse(feature_version=)`
+    ne le signale PAS (la tokenisation a lieu avant le contrôle de grammaire), donc ça
+    passerait tous les tests ici pour exploser à l'installation sur 3.10 — vérifié.
+    """
+    coupables = []
+    fichiers = _fichiers_du_paquet() + sorted(
+        p for p in (RACINE / "tests").rglob("*.py") if "__pycache__" not in p.parts)
+    for fichier in fichiers:
+        source = fichier.read_text()
+        arbre = ast.parse(source, filename=str(fichier))
+        for noeud in ast.walk(arbre):
+            if not isinstance(noeud, ast.JoinedStr):
+                continue
+            for valeur in noeud.values:
+                if not isinstance(valeur, ast.FormattedValue):
+                    continue
+                expr = ast.get_source_segment(source, valeur.value) or ""
+                if "\\" in expr:
+                    coupables.append(
+                        f"{fichier.relative_to(RACINE)}:{noeud.lineno} — {expr[:60]}")
+
+    assert not coupables, (
+        "antislash dans une expression de f-string : ne compile pas avant Python 3.12, "
+        f"alors que 3.10 est annoncé supporté :\n" + "\n".join(coupables))
