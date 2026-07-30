@@ -165,9 +165,10 @@ def test_apply_pack_drag_and_drop_layout(mgr, fake_install, tmp_path):
     make_png(pack / "playmats" / "Blue.png", 1920, 1080)
     make_png(pack / "cardback.png")
     (pack / "translation.txt").write_text("Button.Back=Retour\n")
-    counts = mgr.apply_pack(pack)
-    assert counts == {"cards": 1, "playmats": 1, "cardbacks": 1,
-                      "backgrounds": 0, "translation": 1}
+    rep = mgr.apply_pack(pack)
+    assert rep["applied"] == {"cards": 1, "playmats": 1, "cardbacks": 1,
+                              "backgrounds": 0, "translation": 1}
+    assert rep["skipped"] == []
     assert "Button.Back=Retour" in fake_install.translation_file.read_text()
     assert mgr.restore_all() == {"restored": 4, "failed": []}
 
@@ -224,3 +225,31 @@ def test_restore_all_continues_after_a_failure(mgr, fake_install, tmp_path):
     assert "Blue.png" in rep["failed"][0]["target"]
     assert rep["failed"][0]["reason"]                # raison non vide, affichable en CLI
     assert cardback.read_bytes() == originals[cardback]   # l'AUTRE swap est bien défait
+
+
+# ------------------------- P16.6 : un refus n'interrompt plus le reste du pack
+def test_apply_pack_bad_playmat_does_not_abort_the_whole_pack(fake_install, tmp_path):
+    """Seules les CARTES étaient protégées : un tapis au mauvais format faisait remonter
+    l'exception APRÈS que les cartes avaient déjà été posées. L'appelant voyait un échec
+    alors que la moitié du pack était appliquée, et rien ne disait laquelle.
+    """
+    mgr = AssetManager(fake_install, state_dir=tmp_path / "state")
+    pack = tmp_path / "pack"
+    (pack / "cards").mkdir(parents=True)
+    (pack / "playmats").mkdir(parents=True)
+    make_png(pack / "cards" / "OP01-001.png", 960, 1342)          # valide
+    # cas réel : un pack communautaire livre un tapis absent de CETTE installation
+    make_png(pack / "playmats" / "PasDansLeJeu.png", 1920, 1080)
+    (pack / "translation.txt").write_text("Button.Back=Retour\n")  # valide, APRÈS le tapis
+
+    rep = mgr.apply_pack(pack)
+
+    assert rep["applied"]["cards"] == 1
+    assert rep["applied"]["playmats"] == 0
+    assert rep["applied"]["translation"] == 1, (
+        "l'élément situé APRÈS celui en échec doit quand même être appliqué")
+    assert [s["category"] for s in rep["skipped"]] == ["playmats"]
+    assert "PasDansLeJeu.png" in rep["skipped"][0]["name"]
+    assert rep["skipped"][0]["reason"]
+    # et tout reste réversible
+    assert mgr.restore_all()["failed"] == []

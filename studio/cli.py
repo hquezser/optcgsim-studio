@@ -54,10 +54,13 @@ def cmd_assets_inventory(args) -> int:
 
 def cmd_assets_apply_pack(args) -> int:
     mgr = AssetManager(_install(args))
-    counts = mgr.apply_pack(Path(args.pack))
-    print("Appliqué :", ", ".join(f"{k}={v}" for k, v in counts.items() if v))
+    rep = mgr.apply_pack(Path(args.pack))
+    print("Appliqué :", ", ".join(f"{k}={v}" for k, v in rep["applied"].items() if v))
+    for s in rep["skipped"]:
+        print(f"  ✗ {s['category']}/{s['name']} : {s['reason']}")
     print("`studio assets restore-all` restaure les originaux à tout moment.")
-    return 0
+    # Code de sortie honnête : un pack partiellement appliqué n'est pas un succès.
+    return 1 if rep["skipped"] else 0
 
 
 def cmd_assets_apply_mirror(args) -> int:

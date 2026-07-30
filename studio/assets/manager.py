@@ -398,34 +398,50 @@ class AssetManager:
         origin = f"pack:{pack_dir.name}"
         counts = {"cards": 0, "playmats": 0, "cardbacks": 0,
                   "backgrounds": 0, "translation": 0}
+        skipped: list[dict] = []
+
+        def tenter(categorie: str, nom: str, action) -> None:
+            """Applique un élément ; un refus n'interrompt PAS le reste du pack.
+
+            Avant, seules les CARTES étaient protégées : un tapis au mauvais format faisait
+            remonter l'exception après que 50 cartes avaient déjà été posées. L'appelant
+            voyait un échec alors que la moitié du pack était appliquée, et rien ne disait
+            laquelle. Les refus sont désormais collectés et RENVOYÉS (plutôt qu'imprimés :
+            l'API et l'UI en ont besoin, pas seulement un terminal).
+            """
+            try:
+                action()
+                counts[categorie] += 1
+            except AssetError as e:
+                skipped.append({"category": categorie, "name": nom, "reason": str(e)})
+
         cards = pack_dir / "cards"
         if cards.is_dir():
             for img in sorted(cards.iterdir()):
                 if img.suffix.lower() in (".png", ".jpg", ".jpeg"):
                     cid = img.stem.removesuffix("_small")
-                    try:
-                        self.apply_card(cid, img, origin)
-                        counts["cards"] += 1
-                    except AssetError as e:
-                        print(f"  skip {img.name}: {e}")
+                    tenter("cards", img.name,
+                           lambda c=cid, i=img: self.apply_card(c, i, origin))
         mats = pack_dir / "playmats"
         if mats.is_dir():
             for img in sorted(mats.glob("*.png")):
-                self.apply_playmat(img.stem, img, origin)
-                counts["playmats"] += 1
+                tenter("playmats", img.name,
+                       lambda i=img: self.apply_playmat(i.stem, i, origin))
         for fname, kw in (("cardback.png", {}), ("cardback_don.png", {"don": True})):
             if (pack_dir / fname).exists():
-                self.apply_cardback(pack_dir / fname, origin=origin, **kw)
-                counts["cardbacks"] += 1
+                tenter("cardbacks", fname,
+                       lambda f=fname, k=kw: self.apply_cardback(pack_dir / f, origin=origin,
+                                                                 **k))
         for fname, kw in (("background.jpg", {}),
                           ("deckeditbackground.jpg", {"deck_editor": True})):
             if (pack_dir / fname).exists():
-                self.apply_background(pack_dir / fname, origin=origin, **kw)
-                counts["backgrounds"] += 1
+                tenter("backgrounds", fname,
+                       lambda f=fname, k=kw: self.apply_background(pack_dir / f,
+                                                                   origin=origin, **k))
         if (pack_dir / "translation.txt").exists():
-            self.apply_translation(pack_dir / "translation.txt", origin)
-            counts["translation"] += 1
-        return counts
+            tenter("translation", "translation.txt",
+                   lambda: self.apply_translation(pack_dir / "translation.txt", origin))
+        return {"applied": counts, "skipped": skipped}
 
     # ------------------------------------------------------------ statut / restauration
     def applied_counts(self) -> dict[str, int]:
