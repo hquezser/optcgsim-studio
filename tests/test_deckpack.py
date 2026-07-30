@@ -140,3 +140,48 @@ def test_from_source_ingests_and_cleans(tmp_path):
         return content
     rep = deckpack.from_source("whatever", fake_ingest, work)
     assert rep.imported[0].name == "S"
+
+
+# ------------------------------------------------- P14.3 : traversée par chemin ABSOLU
+def test_absolute_file_path_rejected_without_reading(tmp_path):
+    """`..` ne suffit pas : `pack_dir / "/etc/hosts"` vaut `/etc/hosts` en pathlib.
+
+    Le fichier visé contient ici une decklist PARFAITEMENT VALIDE : s'il était lu, la
+    résolution réussirait. L'échec doit donc dire « illégal » (refus avant lecture) et non
+    « aucune entrée reconnue » (refus après lecture), sinon le garde-fou ne garde rien.
+    """
+    outside = tmp_path / "hors_pack.txt"
+    outside.write_text(VALID)
+    pack_dir = tmp_path / "pack"
+    pack_dir.mkdir()
+
+    manifest = {"name": "P", "decks": [{"name": "evil", "file": str(outside)}]}
+    rep = deckpack.resolve(manifest, pack_dir)
+
+    assert rep.imported == []
+    assert "illégal" in rep.failed[0]["reason"], (
+        "refusé pour la mauvaise raison — le fichier a été lu avant d'échouer")
+
+
+def test_symlink_escaping_pack_rejected(tmp_path):
+    """Un lien symbolique interne pointant hors du pack est couvert par la même résolution."""
+    outside = tmp_path / "hors_pack.txt"
+    outside.write_text(VALID)
+    pack_dir = tmp_path / "pack"
+    pack_dir.mkdir()
+    (pack_dir / "innocent.txt").symlink_to(outside)
+
+    rep = deckpack.resolve({"name": "P", "decks": [
+        {"name": "evil", "file": "innocent.txt"}]}, pack_dir)
+
+    assert rep.imported == [] and "illégal" in rep.failed[0]["reason"]
+
+
+def test_ordinary_relative_file_still_resolves(tmp_path):
+    """Non-régression : le cas légitime (fichier dans un sous-dossier du pack) marche."""
+    pack_dir = tmp_path / "pack"
+    (pack_dir / "decks").mkdir(parents=True)
+    (pack_dir / "decks" / "z.txt").write_text(VALID)
+    rep = deckpack.resolve({"name": "P", "decks": [
+        {"name": "Zoro", "file": "decks/z.txt"}]}, pack_dir)
+    assert len(rep.imported) == 1 and rep.imported[0].deck.leader == "PRB01-001"

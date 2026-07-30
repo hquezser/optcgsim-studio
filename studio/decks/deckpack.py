@@ -105,8 +105,12 @@ def resolve(manifest: dict, pack_dir: Path,
             if "text" in entry:
                 deck = importer.parse_text(entry["text"], name=name, source="deckpack")
             elif "file" in entry:
-                fp = (pack_dir / entry["file"])
-                if not fp.is_file() or ".." in Path(entry["file"]).parts:
+                # `..` seul ne suffit PAS : en pathlib, `pack_dir / "/etc/hosts"` vaut
+                # `/etc/hosts` (un opérande absolu réinitialise le chemin) et ses `parts` ne
+                # contiennent aucun `..`. On résout puis on vérifie l'appartenance au pack —
+                # ce qui couvre d'un coup `..`, les chemins absolus ET les symlinks.
+                fp = (pack_dir / entry["file"]).resolve()
+                if not fp.is_relative_to(pack_dir.resolve()) or not fp.is_file():
                     raise DeckPackError(f"fichier introuvable/illégal : {entry['file']}")
                 deck = importer.parse_text(fp.read_text(errors="ignore"), name=name,
                                            source=f"deckpack:{entry['file']}")
