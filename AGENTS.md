@@ -24,6 +24,10 @@ sujet).
 
 ## Build & Test
 
+La CI (`.github/workflows/ci.yml`) rejoue la suite sur Python 3.10 → 3.13, plus macOS et
+Windows (Windows informatif tant que les chemins n'y sont pas confirmés), vérifie que
+`studio --help` répond et qu'aucun fichier sensible n'est versionné.
+
 ```bash
 python3 -m pytest -q          # suite complète (stdlib + pytest, aucune autre dépendance)
 pip install -e .               # installer en dev (editable) — expose la commande `studio`
@@ -70,3 +74,13 @@ tourne sur `http.server` de la stdlib, pas de Node/npm/build).
   redemande explicitement.
 - Tests : jamais de mutation du vrai `~/.optcgsim-studio/` ou de la vraie installation du jeu —
   toujours via `state_dir`/`GameInstall` paramétrés sur `tmp_path`.
+- **Zéro dépendance externe** : `tests/test_no_external_deps.py` le vérifie mécaniquement (un
+  `import` hors stdlib au niveau module fait échouer la suite). Ce n'est plus une convention
+  qu'on peut oublier. `certifi` est la seule exception tolérée, en import PARESSEUX avec repli.
+- **Tout contenu tiers est hostile** (noms de packs/decks, `deckpack.json`, `collection.json`
+  distant). Dans l'UI : passer par `esc()` avant toute interpolation, et jamais de
+  `onclick="f('${valeur}')"` — délégation d'évènements + `data-*`. Côté Python : un chemin
+  venant d'un manifeste se résout puis se vérifie avec `is_relative_to`.
+- **Un correctif de bug arrive avec un test vérifié EN ÉCHEC sur le code d'avant.** Un test
+  écrit après coup qui passe des deux côtés ne prouve rien (cf. `CHANGELOG.md`, section
+  « connu, non corrigé », pour les cas où ça n'a pas été possible).

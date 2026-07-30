@@ -59,7 +59,7 @@ optcgsim-studio/
 │   ├── db/schema.sql           # entités synchronisables (colonnes de réplication)
 │   └── cli.py                  # studio assets|decks|sync
 ├── frontend/                   # voir frontend/README.md (structure Tauri/RN-ready)
-└── tests/                      # 41 tests (fausse install tmp, convergence 2 appareils)
+└── tests/                      # 313 tests (fausse install tmp, convergence 2 appareils)
 ```
 
 ## Pilier 1 — Assets cosmétiques (`studio assets …`)
@@ -300,12 +300,29 @@ message de commit (« ajoute OP15, corrige 2 alt-arts OP14 »). Ré-exécuter `r
 directement sur un `--out` déjà construit est aussi sûr (idempotent) — `update` évite juste
 de retaper les sources.
 
-**Collections** (P10, génération seulement — EN COURS, voir `docs/PLAN-import-packs.md`) :
-`--collection-label "…"` / `--collection-group <clé>` maintiennent un `<out>/collection.json`
-VISIBLE (une entrée par famille, upsert automatique) décrivant quelles familles sont des
-variantes alternatives d'un même choix (même `--collection-group`, ex. cartes classiques vs
-full-art) et lesquelles sont complémentaires. Sert à un futur import groupé côté UI web — pas
-encore implémenté ; pour l'instant ce manifeste ne fait qu'être généré et tenu à jour côté CLI.
+**Collections** (P10) : `--collection-label "…"` / `--collection-group <clé>` maintiennent un
+`<out>/collection.json` VISIBLE (une entrée par famille, upsert automatique) décrivant quelles
+familles sont des variantes alternatives d'un même choix (même `--collection-group`, ex. cartes
+classiques vs full-art) et lesquelles sont complémentaires. L'UI web le consomme : « Importer une
+collection » propose les variantes en boutons radio et les compléments en cases à cocher, puis
+importe la sélection en un geste. `studio config set-default-collection <source>` (P12) la fait
+analyser automatiquement à l'ouverture de `studio ui`, sans recoller la source à chaque fois.
+
+## Sécurité et réversibilité
+
+Le studio est fait pour **ingérer du contenu venant d'inconnus** (un `.zip` trouvé sur Discord,
+un dépôt communautaire, un `deckpack.json` partagé) : ce contenu est traité comme hostile par
+défaut. Extraction refusant la traversée de chemin, contrôle des octets magiques et des
+dimensions des images, noms tiers échappés dans l'interface, chemins de `deckpack.json`
+contraints au dossier du pack, contrôle d'origine sur l'API locale.
+
+`studio assets restore-all` remet l'installation dans son état d'origine à l'octet près. Elle
+ne s'arrête plus au premier échec : elle restaure tout ce qu'elle peut, renvoie
+`{restored, failed}` et sort en code 1 en listant ce qui a échoué — une restauration partielle
+silencieuse serait pire que pas de restauration du tout.
+
+Détails, modèle de menace et signalement de vulnérabilité : [`SECURITY.md`](SECURITY.md).
+Historique des changements : [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Pilier 3 — Synchronisation multi-appareils (`studio sync`)
 
