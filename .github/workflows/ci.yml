@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: pytest · Python ${{ matrix.python }} · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # Windows est INFORMATIF tant que la cartographie des chemins n'y est pas confirmée sur
+    # machine réelle (`gamepaths.py` la marque `verified=False`). Il signale les écarts de
+    # portabilité sans bloquer une livraison. À passer bloquant une fois vérifié.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Toutes les versions couvertes par `requires-python = ">=3.10"`. Un support annoncé
+        # mais non testé est un bug d'installation silencieux.
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        os: [ubuntu-latest]
+        include:
+          # Le studio écrit dans une VRAIE installation de jeu, et la cartographie des chemins
+          # n'est confirmée que sur macOS (cf. gamepaths.py) — on y teste au moins une version.
+          - python: "3.12"
+            os: macos-latest
+          # Windows : chemins Unity `AppData/LocalLow`, séparateurs, casse du système de
+          # fichiers. Non vérifié sur machine réelle, d'où l'intérêt de le tenir en CI.
+          - python: "3.12"
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Installer (paquet + pytest uniquement)
+        # Volontairement PAS de `pip install -r requirements.txt` : le projet ne doit rien
+        # tirer d'autre. Si un `import` externe s'était glissé dans studio/, l'étape suivante
+        # échouerait — c'est exactement ce que vérifie tests/test_no_external_deps.py.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest
+
+      - name: Vérifier qu'aucune dépendance tierce n'a été installée
+        shell: bash
+        run: |
+          echo "Paquets présents en plus de pip/setuptools/pytest :"
+          python - <<'PY'
+          import importlib.metadata as md
+          # pytest et ses propres dépendances transitives — la liste vise `studio`, pas
+          # l'outillage de test. Vérifié localement : sans Pygments, la CI serait rouge dès
+          # le premier run (pytest >= 8.4 le tire).
+          attendus = {"optcgsim-studio", "pip", "setuptools", "wheel", "pytest",
+                      "iniconfig", "packaging", "pluggy", "exceptiongroup", "tomli",
+                      "colorama", "pygments"}
+          extra = sorted(d.metadata["Name"] for d in md.distributions()
+                         if d.metadata["Name"] and d.metadata["Name"].lower() not in attendus)
+          print(extra or "aucun")
+          assert not extra, f"dépendances inattendues installées : {extra}"
+          PY
+
+      - name: Suite de tests
+        run: python -m pytest -q
+
+      - name: Le point d'entrée `studio` répond
+        # Un `console_scripts` cassé ne se voit dans aucun test unitaire.
+        run: |
+          studio --help
+          studio assets --help
+
+  integrite-git:
+    name: Rien de sensible n'est versionné
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Aucun secret ni état local dans le dépôt
+        shell: bash
+        run: |
+          # Le token GitHub vit dans ~/.optcgsim-studio/ (hors dépôt) et ne doit jamais être
+          # committé — cf. studio/config.py et le garde-fou de SECURITY.md.
+          mauvais=$(git ls-files | grep -Ei '(^|/)(config\.json|credentials|\.env|.*\.pem|.*\.key)$' || true)
+          if [ -n "$mauvais" ]; then
+            echo "Fichiers sensibles versionnés :"; echo "$mauvais"; exit 1
+          fi
+          echo "OK — rien de sensible versionné."
