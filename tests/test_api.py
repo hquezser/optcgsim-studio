@@ -568,3 +568,54 @@ def test_http_error_is_json(server):
         assert False, "aurait dû lever 404"
     except urllib.error.HTTPError as e:
         assert e.code == 404 and "error" in json.loads(e.read())
+
+
+# ------------------------------------------------- P14.2 : contrôle d'origine (CSRF + rebinding)
+# Écouter sur 127.0.0.1 n'est pas une frontière vis-à-vis du navigateur : toute page visitée
+# pendant que `studio ui` tourne pouvait poster ici, et un domaine résolvant vers 127.0.0.1
+# (rebinding DNS) pouvait en plus LIRE les réponses.
+def _raw(base, path, method="GET", headers=None, body=None):
+    """Requête brute renvoyant (code, corps) sans lever sur les codes d'erreur."""
+    req = urllib.request.Request(base + path, data=body, method=method,
+                                 headers=headers or {})
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+
+
+def test_foreign_origin_is_refused_on_post(server):
+    """CSRF : une page tierce ne doit pas pouvoir déclencher une action à effet de bord."""
+    code, body = _raw(server, "/api/decks/sync-from-sim", "POST",
+                      {"Origin": "https://evil.example", "Content-Type": "application/json"},
+                      b"{}")
+    assert code == 403
+    assert "Origine refusée" in json.loads(body)["error"]
+
+
+def test_foreign_origin_is_refused_on_get(server):
+    code, body = _raw(server, "/api/config", headers={"Origin": "https://evil.example"})
+    assert code == 403
+
+
+def test_unexpected_host_is_refused(server):
+    """Rebinding DNS : le Host doit correspondre au studio local, sinon la réponse fuit."""
+    code, body = _raw(server, "/api/config", headers={"Host": "attacker.example"})
+    assert code == 403
+    assert "rebinding" in json.loads(body)["error"]
+
+
+def test_absent_origin_is_accepted(server):
+    """curl, la CLI et un futur client Tauri n'envoient pas d'Origin — ils restent servis."""
+    code, body = _raw(server, "/api/config")
+    assert code == 200 and "github_token_set" in json.loads(body)
+
+
+def test_own_origin_is_accepted(server):
+    """L'UI elle-même envoie son Origin : elle doit passer."""
+    code, _ = _raw(server, "/api/config", headers={"Origin": server})
+    assert code == 200
+    code, _ = _raw(server, "/api/config",
+                   headers={"Origin": server.replace("127.0.0.1", "localhost")})
+    assert code == 200, "localhost et 127.0.0.1 désignent la même UI"

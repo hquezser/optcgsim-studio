@@ -457,10 +457,41 @@ def make_handler(svc: StudioService):
             raw = self.rfile.read(n) if n else b""
             return json.loads(raw or b"{}")
 
+        # -------- garde-fou d'origine
+        def _guard_origin(self) -> str | None:
+            """Message d'erreur si la requête ne vient pas de l'UI locale, sinon None.
+
+            Écouter sur 127.0.0.1 n'est PAS une frontière vis-à-vis du navigateur :
+
+            - **CSRF** — n'importe quel site visité pendant que `studio ui` tourne peut poster
+              ici. Sans préflight (corps en `Content-Type` simple, et `_body_json` ignore de
+              toute façon l'en-tête), les routes à effet de bord sont atteignables : appliquer
+              un pack au jeu, remplacer le token GitHub, retirer des decks.
+            - **Rebinding DNS** — un nom de domaine qui finit par résoudre vers 127.0.0.1
+              permet en plus de LIRE les réponses ; d'où le contrôle du `Host`.
+
+            Un `Origin` ABSENT reste accepté : curl, la CLI et un futur client Tauri n'en
+            envoient pas, et leur requête ne vient pas d'une page web tierce.
+            """
+            port = self.server.server_address[1]
+            hosts = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+            host = (self.headers.get("Host") or "").strip()
+            if host not in hosts:
+                return (f"Host inattendu : {host!r}. Le studio ne répond que sur "
+                        f"127.0.0.1/localhost:{port} (protection contre le rebinding DNS).")
+            origin = self.headers.get("Origin")
+            if origin is not None and origin not in {f"http://{h}" for h in hosts}:
+                return (f"Origine refusée : {origin!r}. Une page web tierce ne peut pas "
+                        "piloter le studio local (protection CSRF).")
+            return None
+
         # -------- routing
         def do_GET(self):
             u = urlparse(self.path)
             path, qs = u.path, parse_qs(u.query)
+            denied = self._guard_origin()
+            if denied:
+                return self._send(403, {"error": denied})
             try:
                 if path in ("/", "/index.html"):
                     return self._send(200, (STATIC / "index.html").read_bytes(),
@@ -488,6 +519,9 @@ def make_handler(svc: StudioService):
         def do_POST(self):
             u = urlparse(self.path)
             path, qs = u.path, parse_qs(u.query)
+            denied = self._guard_origin()
+            if denied:
+                return self._send(403, {"error": denied})
             try:
                 # Opérations longues (téléchargement, normalisation, application) : lancées
                 # en tâche de fond, la requête renvoie IMMÉDIATEMENT un job_id à interroger
