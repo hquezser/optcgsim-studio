@@ -41,7 +41,7 @@ from urllib.parse import parse_qs, urlparse
 from ..assets import cardmeta, collections, packlib, sourcefetch
 from ..assets.manager import AssetError, AssetManager
 from ..config import Config
-from ..decks import importer
+from ..decks import importer, persist
 from ..gamepaths import GameInstall, locate
 from ..nettls import CERT_FIX_HINT, is_cert_error, ssl_context
 from ..storage.local import DEFAULT_DB, LocalStore
@@ -336,14 +336,8 @@ class StudioService:
     def _persist_deck(self, store, deck: importer.Decklist, deck_name: str,
                       tags: list[str] | None) -> str:
         """Écrit un deck dans le sim (.txt) + en base. Renvoie le chemin du .txt."""
-        path = deck.save_to_sim(deck_name, self.install.persistent)
-        profiles = store.list("profiles")
-        prof = profiles[0] if profiles else store.put("profiles", {"name": "default",
-                                                                   "prefs": {}})
-        store.put("decks", {"profile_id": prof["id"], "name": deck_name,
-                            "leader": deck.leader, "cards": deck.cards,
-                            "tags": tags or [], "source": deck.source})
-        return str(path)
+        return str(persist.persist_deck(store, deck, deck_name, tags,
+                                        self.install.persistent))
 
     def import_deck(self, text: str | None = None, url: str | None = None,
                     name: str | None = None, tags: list[str] | None = None) -> dict:

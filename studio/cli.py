@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .assets import packlib
 from .assets.manager import AssetError, AssetManager
-from .decks import importer
+from .decks import importer, persist
 from .gamepaths import locate
 from .nettls import CERT_FIX_HINT, is_cert_error
 from .storage.local import DEFAULT_DB, LocalStore
@@ -520,15 +520,10 @@ def cmd_decks_import(args) -> int:
     name = args.name or f"Imported {deck.leader}"
 
     inst = _install(args)
-    path = deck.save_to_sim(name, inst.persistent)
     with LocalStore(Path(args.db)) as store:
-        profiles = store.list("profiles")
-        profile = profiles[0] if profiles else store.put(
-            "profiles", {"name": "default", "prefs": {}})
-        store.put("decks", {
-            "profile_id": profile["id"], "name": name, "leader": deck.leader,
-            "cards": deck.cards, "tags": args.tags.split(",") if args.tags else [],
-            "source": deck.source})
+        path = persist.persist_deck(store, deck, name,
+                                    args.tags.split(",") if args.tags else [],
+                                    inst.persistent)
     print(f"Deck « {name} » ({deck.leader}, {deck.total} cartes)")
     print(f"  -> sim  : {path}")
     print(f"  -> base : {args.db} (synchronisable)")
@@ -586,18 +581,12 @@ def cmd_decks_import_pack(args) -> int:
     inst = _install(args)
     rep = deckpack.from_source(args.source, packlib.ingest, _PACK_LIB / ".deckwork")
     with LocalStore(Path(args.db)) as store:
-        profiles = store.list("profiles")
-        prof = profiles[0] if profiles else store.put("profiles", {"name": "default",
-                                                                   "prefs": {}})
         # Un échec d'ÉCRITURE ne doit pas faire perdre les decks suivants (même politique que
         # la résolution, et que la route API équivalente).
         persisted, failed = [], list(rep.failed)
         for rd in rep.imported:
             try:
-                rd.deck.save_to_sim(rd.name, inst.persistent)
-                store.put("decks", {"profile_id": prof["id"], "name": rd.name,
-                                    "leader": rd.deck.leader, "cards": rd.deck.cards,
-                                    "tags": rd.tags, "source": rd.deck.source})
+                persist.persist_deck(store, rd.deck, rd.name, rd.tags, inst.persistent)
                 persisted.append(rd)
             except OSError as e:
                 failed.append({"name": rd.name, "reason": str(e)})

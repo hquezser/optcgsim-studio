@@ -170,3 +170,53 @@ def test_doctor_never_writes_anything(tmp_path, monkeypatch, capsys):
     avant = empreinte()
     _doctor(tmp_path, monkeypatch, capsys, inst=inst)
     assert empreinte() == avant, "doctor ne doit modifier aucun fichier du jeu"
+
+
+# ------------------- P16.4 : une seule source de vérité pour la persistance d'un deck
+def test_cli_and_api_persist_a_deck_identically(tmp_path):
+    """La CLI et l'API doivent produire la MÊME ligne en base et le MÊME .txt.
+
+    La séquence existait en trois exemplaires et avait déjà dérivé (l'isolation des échecs
+    d'écriture n'avait été ajoutée qu'à deux d'entre eux). Ce test échouerait si une copie
+    réapparaissait et divergeait.
+    """
+    from studio.api.server import StudioService
+    from studio.decks import importer
+    from studio.storage.local import LocalStore
+
+    deck50 = ("1xOP01-060\n" + "\n".join(f"4xAA{i:02d}-001" for i in range(12))
+              + "\n2xBB01-001")
+
+    # côté API
+    inst_api = _install_factice(tmp_path / "api")
+    svc = StudioService(inst_api, db_path=str(tmp_path / "api.db"),
+                        lib_dir=tmp_path / "lib", state_dir=tmp_path / "etat_api")
+    svc.import_deck(text=deck50, name="MonDeck", tags=["meta"])
+    par_api = svc.decks()[0]
+
+    # côté CLI (même helper partagé)
+    inst_cli = _install_factice(tmp_path / "cli")
+    from studio.decks import persist
+    with LocalStore(tmp_path / "cli.db") as store:
+        deck = importer.parse_text(deck50, name="MonDeck", source="ui")
+        chemin = persist.persist_deck(store, deck, "MonDeck", ["meta"], inst_cli.persistent)
+        par_cli = store.list("decks")[0]
+
+    comparable = lambda d: {k: d[k] for k in ("name", "leader", "cards", "tags", "source")}
+    assert comparable(par_api) == comparable(par_cli)
+    assert chemin.read_text() == (inst_api.persistent / "MonDeck.txt").read_text()
+
+
+def test_persist_deck_creates_the_default_profile_once(tmp_path):
+    from studio.decks import importer, persist
+    from studio.storage.local import LocalStore
+
+    inst = _install_factice(tmp_path)
+    deck50 = ("1xOP01-060\n" + "\n".join(f"4xAA{i:02d}-001" for i in range(12))
+              + "\n2xBB01-001")
+    with LocalStore(tmp_path / "db.sqlite") as store:
+        for n in ("A", "B", "C"):
+            persist.persist_deck(store, importer.parse_text(deck50, name=n), n, [],
+                                 inst.persistent)
+        assert len(store.list("profiles")) == 1, "un seul profil par défaut"
+        assert len(store.list("decks")) == 3
