@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.error
 from pathlib import Path
@@ -49,6 +50,126 @@ def _install(args):
 def cmd_assets_inventory(args) -> int:
     print(json.dumps(AssetManager(_install(args)).inventory(),
                      indent=1, ensure_ascii=False))
+    return 0
+
+
+def cmd_doctor(args) -> int:
+    """Diagnostic de l'installation — la première chose à joindre à un rapport de bug.
+
+    Ne modifie RIEN : que des lectures. Sort en 1 s'il existe au moins un problème
+    bloquant (✗), 0 sinon (les ⚠ sont informatifs).
+    """
+    import platform
+    import sqlite3
+
+    from .config import Config
+
+    # `--state-dir` permet de diagnostiquer une autre installation du studio (ou une copie
+    # de sauvegarde) sans toucher à la sienne — et rend la commande testable sans approcher
+    # le vrai ~/.optcgsim-studio.
+    etat = Path(args.state_dir) if getattr(args, "state_dir", None) else None
+
+    lignes: list[tuple[str, str, str]] = []      # (niveau, sujet, détail)
+
+    def ok(sujet, detail=""):
+        lignes.append(("✓", sujet, detail))
+
+    def attention(sujet, detail=""):
+        lignes.append(("⚠", sujet, detail))
+
+    def probleme(sujet, detail=""):
+        lignes.append(("✗", sujet, detail))
+
+    # -- environnement
+    v = sys.version_info
+    ok("Python", f"{v.major}.{v.minor}.{v.micro} ({platform.system()} {platform.machine()})")
+    if (v.major, v.minor) < (3, 10):
+        probleme("Version de Python", "3.10 minimum requis")
+
+    # -- installation du jeu
+    inst = locate(Path(args.app_root) if args.app_root else None)
+    if inst is None:
+        probleme("Installation OPTCGSim", "introuvable — préciser --app-root")
+    else:
+        ok("Installation", f"{inst.os_name} — {inst.app_root}")
+        if not inst.verified:
+            attention("Cartographie des chemins",
+                      f"non confirmée sur {inst.os_name} (chemins Unity supposés)")
+        for label, chemin in (("StreamingAssets", inst.streaming_assets),
+                              ("Données utilisateur", inst.persistent)):
+            if not chemin.exists():
+                probleme(label, f"absent : {chemin}")
+            elif not os.access(chemin, os.W_OK):
+                probleme(label, f"non écrivable : {chemin}  "
+                                "(le studio n'élève JAMAIS ses privilèges)")
+            else:
+                ok(label, str(chemin))
+
+    # -- état du studio : sauvegardes et manifeste (le cœur de la réversibilité)
+    if inst is not None:
+        mgr = AssetManager(inst, state_dir=etat) if etat else AssetManager(inst)
+        entrees = mgr._manifest
+        manquantes = [k for k, e in entrees.items() if not Path(e["backup"]).exists()]
+        if manquantes:
+            probleme("Sauvegardes d'origine",
+                     f"{len(manquantes)} manquante(s) sur {len(entrees)} — "
+                     "ces fichiers ne pourront PAS être restaurés")
+            for k in manquantes[:5]:
+                lignes.append(("", "", f"      {Path(k).name}"))
+        else:
+            ok("Sauvegardes d'origine",
+               f"{len(entrees)} entrée(s), toutes présentes"
+               if entrees else "aucun swap actif")
+        if entrees:
+            etats: dict[str, int] = {}
+            for r in mgr.status():
+                etats[r["state"]] = etats.get(r["state"], 0) + 1
+            detail = ", ".join(f"{n} {e}" for e, n in sorted(etats.items()))
+            (attention if etats.get("overwritten") or etats.get("missing") else ok)(
+                "État des swaps", detail
+                + ("  (« overwritten » = mise à jour du sim ou modification externe)"
+                   if etats.get("overwritten") else ""))
+
+    # -- base de données
+    db = Path(args.db)
+    if not db.exists():
+        attention("Base de données", f"pas encore créée ({db})")
+    else:
+        try:
+            with LocalStore(db) as store:
+                comptes = {e: len(store.list(e))
+                           for e in ("profiles", "decks", "cosmetic_packs")}
+                ok("Base de données",
+                   ", ".join(f"{n} {e}" for e, n in comptes.items()) + f"  ({db})")
+                if store.corrupt:
+                    probleme("Enregistrements illisibles",
+                             f"{len(store.corrupt)} — sautés à la lecture")
+                    for c in store.corrupt[:5]:
+                        lignes.append(("", "", f"      {c}"))
+        except sqlite3.DatabaseError as e:
+            probleme("Base de données", f"illisible : {e}")
+
+    # -- configuration
+    cfg = Config(etat) if etat else Config()
+    ok("Token GitHub", "configuré (dépôts privés accessibles)"
+       if cfg.has_github_token() else "absent (dépôts publics uniquement)")
+    src = cfg.default_collection_source()
+    ok("Collection par défaut", src or "aucune")
+
+    largeur = max(len(s) for _, s, _ in lignes if s) if lignes else 0
+    print("Diagnostic optcgsim-studio\n" + "─" * 60)
+    for niveau, sujet, detail in lignes:
+        if not sujet:
+            print(detail)
+        else:
+            print(f"{niveau} {sujet.ljust(largeur)}  {detail}")
+    problemes = sum(1 for n, _, _ in lignes if n == "✗")
+    print("─" * 60)
+    if problemes:
+        print(f"{problemes} problème(s) bloquant(s). "
+              "Joins cette sortie à ton rapport de bug.")
+        return 1
+    print("Aucun problème bloquant.")
     return 0
 
 
@@ -703,6 +824,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="contrôler un deckpack sans l'importer (dry-run)")
     dvp.add_argument("source", help="dossier, .zip ou URL contenant un deckpack.json")
     dvp.set_defaults(func=cmd_decks_validate_pack)
+
+    pdoc = sub.add_parser("doctor",
+                          help="diagnostic de l'installation (à joindre à un rapport de bug)")
+    pdoc.add_argument("--state-dir", default=None,
+                      help="dossier d'état à inspecter (défaut : ~/.optcgsim-studio)")
+    pdoc.set_defaults(func=cmd_doctor)
 
     pui = sub.add_parser("ui", help="lance l'interface web locale (zéro dépendance)")
     pui.add_argument("--port", type=int, default=8770)
