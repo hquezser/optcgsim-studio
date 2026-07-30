@@ -56,6 +56,22 @@ fait pour ingérer des fichiers venant d'inconnus, et les traitait avec trop de 
 - **Traces Python brutes en ligne de commande** sur une coupure réseau ou un disque plein.
   Les erreurs sont désormais lisibles, avec l'indice de correctif macOS pour les certificats,
   et `Ctrl-C` sort proprement en code 130.
+- **Un élément refusé interrompait toute l'application d'un pack.** Seules les cartes étaient
+  protégées : un tapis absent de votre installation — cas banal d'un pack communautaire —
+  faisait échouer l'opération après que les cartes avaient déjà été posées, sans dire
+  laquelle. Chaque refus est maintenant listé avec sa raison, et le reste s'applique.
+- **Un champ oublié dans une requête répondait « introuvable »**, envoyant chercher un
+  problème de ressource là où il n'y avait qu'un champ manquant. Les codes d'erreur ne
+  dépendent plus non plus du verbe HTTP employé.
+- **Une variable d'environnement `OPTCG_STUDIO_GITHUB_TOKEN` vide masquait le token
+  configuré**, faisant échouer les dépôts privés sur un message incompréhensible.
+- **Une URL GitHub pointant sur un sous-dossier** — celle qu'on copie après avoir navigué
+  dans un dépôt — n'était pas reconnue : le studio téléchargeait le dépôt entier au lieu du
+  strict nécessaire.
+- **Le dossier de travail de `repos build` n'était jamais supprimé** : chaque construction
+  laissait derrière elle une copie complète de tout ce qui avait été téléchargé.
+- **Presse-papiers bloqué** : le délai d'attente était posé mais son expiration jamais
+  traitée, d'où une trace brute.
 
 ### Performance
 
@@ -67,6 +83,10 @@ fait pour ingérer des fichiers venant d'inconnus, et les traitait avec trop de 
 
 ### Ajouté
 
+- **`studio doctor`** : diagnostic complet de l'installation, à joindre à un rapport de bug.
+  Vérifie notamment que chaque sauvegarde d'origine est bien présente — sans quoi un fichier
+  du jeu ne pourrait plus être restauré, ce qu'on découvrait jusqu'ici le jour où on en avait
+  besoin. Lecture seule stricte.
 - **Intégration continue** : suite de tests sur Python 3.10 → 3.13, plus macOS et Windows
   (Windows informatif tant que la cartographie des chemins n'y est pas confirmée). Vérifie
   aussi que le point d'entrée `studio` répond et qu'aucun fichier sensible n'est versionné.
@@ -78,6 +98,11 @@ fait pour ingérer des fichiers venant d'inconnus, et les traitait avec trop de 
   couvert.
 - **Test verrouillant l'invariant de prévisualisation** : `apply_mirror(dry_run=True)` n'écrit
   rien dans le jeu. Le comportement était correct mais aucun test ne le protégeait.
+- **Fuzzing des analyseurs de contenu tiers** (decklists, pages web, noms de fichiers
+  d'archive, manifestes de collection) : ils doivent échouer proprement, jamais en trace
+  brute. 9 620 cas passés, zéro exception inattendue.
+- **Garde-fous de compatibilité Python 3.10**, la version minimale annoncée mais que rien ne
+  vérifiait — une syntaxe trop récente aurait cassé l'installation sans message utile.
 
 ### Connu, non corrigé
 
@@ -87,3 +112,7 @@ fait pour ingérer des fichiers venant d'inconnus, et les traitait avec trop de 
   modification locale écrasée. Nécessite une décision de conception sur la sémantique voulue.
 - Le support Windows n'est pas vérifié sur machine réelle (`gamepaths.py` le marque
   `verified=False`).
+- La logique de persistance d'un deck est écrite à trois endroits légèrement différents ;
+  la factoriser demande de trancher quel comportement fait référence.
+- Le classement de la catégorie `OPBounty` est peut-être erroné, mais se tromper casserait
+  l'application de packs : à trancher avec la connaissance du jeu.
