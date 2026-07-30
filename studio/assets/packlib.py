@@ -65,6 +65,30 @@ class PackError(Exception):
     pass
 
 
+def safe_pack_name(name: str) -> str:
+    """Assainit un nom de pack — il sert de nom de DOSSIER dans la bibliothèque.
+
+    Retire tout séparateur de chemin et neutralise `.`/`..`. Les espaces sont conservés (un
+    pack s'appelle « Alt arts FR »), les caractères de chemin non.
+    """
+    return re.sub(r"[^\w.\- ]", "_", str(name)).strip(" .") or "pack"
+
+
+def _pack_dir_for(lib_dir: Path, name: str) -> Path:
+    """`lib_dir/<name>`, en GARANTISSANT qu'on reste strictement sous `lib_dir`.
+
+    Garde-fou critique : ce chemin est effacé par `rmtree` dans `normalize()`. Un `name` valant
+    `..` viserait `~/.optcgsim-studio` lui-même — donc les backups pristine (plus aucun
+    `restore-all` possible, le jeu resterait modifié pour toujours), le manifeste et `studio.db`.
+    Le nom peut venir d'un `collection.json` distant (`label`), pas seulement du clavier.
+    """
+    lib, pack_dir = Path(lib_dir), Path(lib_dir) / name
+    r_lib, r_pack = lib.resolve(), pack_dir.resolve()
+    if r_pack == r_lib or not r_pack.is_relative_to(r_lib):
+        raise PackError(f"Nom de pack invalide (sortirait de la bibliothèque) : {name!r}")
+    return pack_dir             # non résolu : préserve le chemin attendu par les appelants
+
+
 # Un gros dossier communautaire (plusieurs centaines de Mo à quelques Go) transféré en un
 # seul zip monolithique est exposé à une corruption réseau ponctuelle en cours de route (CRC
 # invalide sur UN membre, alors que le download a semblé se terminer normalement) — rencontré
@@ -500,7 +524,7 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
     distinct de `unclassified` (un exclu volontaire n'est pas une erreur de reconnaissance).
     """
     src_dir = Path(src_dir)
-    pack_dir = Path(lib_dir) / name
+    pack_dir = _pack_dir_for(lib_dir, name)     # valide AVANT le rmtree ci-dessous
     if pack_dir.exists():
         shutil.rmtree(pack_dir)
     pack_dir.mkdir(parents=True)
@@ -651,7 +675,9 @@ def add_pack(source: str | Path, install: GameInstall, name: str | None = None,
         entries = [p for p in src.iterdir()] if src.is_dir() else []
         if len(entries) == 1 and entries[0].is_dir():
             src = entries[0]
-        pack_name = name or re.sub(r"[^\w.-]", "_", Path(str(source)).stem) or "pack"
+        # Assaini dans les DEUX cas : un `name` explicite peut venir d'un `collection.json`
+        # distant (`label`), pas seulement du clavier de l'utilisateur.
+        pack_name = safe_pack_name(name or Path(str(source)).stem)
         # Le filtre est TOUJOURS repassé à normalize : sur le chemin fetch-sélectif il est
         # déjà satisfait (no-op), sur le chemin complet c'est lui qui économise le disque.
         return normalize(src, install, pack_name, str(source), lib_dir,

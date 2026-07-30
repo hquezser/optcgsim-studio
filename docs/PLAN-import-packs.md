@@ -980,7 +980,42 @@ P10-c (« Importer une collection » marche, mais part d'un champ vide chaque fo
   `~/optcgsim-repos/collection.json` (DB sandboxée) → à l'ouverture de la page, la section
   « Importer une collection » affiche déjà les 6 packs sans aucun clic.
 
-### Garde-fous inchangés
+### P13 — Durcissement : la garantie de réversibilité (2026-07-30)
+
+Issu d'un audit du projet (4 workers de lecture en parallèle + vérification empirique). La
+promesse n°1 — *« RÉVERSIBLE À 100 % »* — avait **trois trous indépendants**, tous en périphérie
+de `_swap` (le chemin d'écriture lui-même est sain), tous **silencieux** :
+
+1. **`normalize()` faisait `rmtree` sur `lib_dir/<name>` sans valider `name`** — un nom valant
+   `..` effaçait `~/.optcgsim-studio` : backups pristine (donc plus aucun `restore-all`
+   possible, le jeu resterait modifié pour toujours), manifeste et `studio.db`. Le vecteur n'était
+   pas qu'une faute de frappe : `index.html` envoie `name: p.label` où `label` vient d'un
+   `collection.json` récupéré par HTTP. Correctif : `_pack_dir_for()` valide qu'on reste sous la
+   bibliothèque **avant** le `rmtree`, et `safe_pack_name()` assainit désormais AUSSI un `name`
+   explicite (avant : seulement la branche de repli).
+2. **Le backup pristine n'était write-once que dans le manifeste, pas sur disque.** Le chemin de
+   backup est déterministe (sha1 de la cible) mais son existence n'était jamais vérifiée : après
+   une perte de `manifest.json`, le swap suivant sauvegardait le fichier **déjà modifié** comme
+   original, et `restore_all()` restaurait le thème précédent en croyant restaurer le jeu.
+   Correctif : `if bk.exists(): return bk`.
+3. **`restore_all()` s'arrêtait au premier échec** — la commande de secours du projet laissait
+   tous les swaps suivants appliqués, exception nue à l'écran. Correctif : `try/except` par
+   entrée, retour `{"restored": n, "failed": [...]}` (même politique que `deckpack.resolve()`),
+   affiché en CLI avec code de sortie 1 s'il reste des échecs.
+
+Quatrième point, trou de **couverture** et non bug : l'invariant « une prévisualisation n'écrit
+jamais dans le jeu » (`apply_mirror(dry_run=True)`) n'avait aucun test — c'est le bouton
+« Prévisualiser » de l'UI. Comportement vérifié correct, désormais verrouillé par un test.
+
+**Vérification** : 255 tests verts (244 + 11). Chaque nouveau test a été confronté à l'ancien code
+pour prouver qu'il échoue bien pour la bonne raison (13.2 restaurait `THEME_A` au lieu de
+l'original ; 13.3 laissait remonter `FileNotFoundError`). PoC de destruction d'état rejoué :
+`..`, `../..` et `../../studio-state` sont bloqués, état du studio intact.
+
+Reste du plan d'audit (P14 → P18 : échappement de l'UI et contrôle d'origine, fiabilité des
+opérations longues, perf/cohérence, 2 tests trompeurs) — non traité.
+
+## Garde-fous inchangés
 
 L'auto-chargement ne fait que RÉSOUDRE/AFFICHER (identique à un clic manuel sur
 « Analyser ») — importer reste un clic explicite sur « Importer la sélection », exactement
@@ -1045,6 +1080,7 @@ annoncée), jamais automatiquement en arrière-plan hors `packs update`.
 | P10 | collections de packs (import multi-dépôts guidé, variantes vs complémentaires) | ~1 session | ✅ fait (a→d, format+génération CLI+route API+UI+tests ; 211 tests verts) |
 | P11 | sync decks jeu -> studio, génération de deckpacks, provenance par deck | ~1 session | ✅ fait (scan+diff additif, `generate()`, routes+CLI+UI+tests ; 236 tests verts) |
 | P12 | collection par défaut (proposer ses propres packs GitHub sans copier-coller) | ~¼-½ session | ✅ fait (2026-07-21) |
+| P13 | durcissement : refermer les 3 trous de la garantie de réversibilité (+ test du `dry_run`) | ~1 session | ✅ fait (2026-07-30) |
 
 Décisions ouvertes historiques (résolues) :
 - `Custom Cards`/`Extra Alts` (Dropbox) : le rapport « non-classés » de P1 les révèle.

@@ -170,3 +170,54 @@ def test_add_pack_unwraps_github_single_folder(install, lib, tmp_path):
     pack, rep = packlib.add_pack(tmp_path / "src", install, name="FR", lib_dir=lib,
                                  work_dir=tmp_path / "src")
     assert "OP01-001" in rep.cards and rep.translation
+
+
+# ------------------------------------------------------------------ P13.1 : nom de pack hostile
+# Le nom de pack sert de nom de DOSSIER, et `normalize()` fait `rmtree` dessus. Un nom qui
+# s'échappe de la bibliothèque effacerait `~/.optcgsim-studio` : backups pristine (donc plus
+# aucun `restore-all` possible), manifeste et `studio.db`. Le nom peut venir du `label` d'un
+# `collection.json` distant, pas seulement du clavier.
+@pytest.mark.parametrize("hostile", ["..", "../..", "../evil", ".", ""])
+def test_normalize_refuses_name_escaping_library(install, lib, tmp_path, hostile):
+    lib.mkdir(parents=True)
+    sentinel = lib.parent / "studio.db"                 # voisin de la bibliothèque
+    sentinel.write_text("mes decks")
+    (lib / "PackExistant").mkdir()
+    src = tmp_path / "src"
+    make_png(src / "Cards" / "OP01" / "OP01-001.png", 960, 1342)
+
+    with pytest.raises(packlib.PackError, match="invalide"):
+        packlib.normalize(src, install, hostile, "x", lib)
+
+    assert sentinel.read_text() == "mes decks"          # rien n'a été effacé
+    assert (lib / "PackExistant").is_dir()
+    assert lib.is_dir()
+
+
+def test_normalize_accepts_ordinary_names(install, lib, tmp_path):
+    """Non-régression : les noms normaux (espaces, accents, tirets) passent toujours."""
+    src = tmp_path / "src"
+    make_png(src / "Cards" / "OP01" / "OP01-001.png", 960, 1342)
+    pack, rep = packlib.normalize(src, install, "Alt arts FR - v2", "x", lib)
+    assert pack == lib / "Alt arts FR - v2"
+    assert "OP01-001" in rep.cards
+
+
+def test_add_pack_sanitizes_explicit_name(install, lib, tmp_path):
+    """Un `name` EXPLICITE est assaini lui aussi (il vient parfois d'une source distante)."""
+    src = tmp_path / "src"
+    make_png(src / "Cards" / "OP01" / "OP01-001.png", 960, 1342)
+    pack, rep = packlib.add_pack(src, install, name="../../evil", lib_dir=lib,
+                                 work_dir=tmp_path / "src")
+    # `..` peut subsister comme TEXTE (`_.._evil`) : ce qui compte est qu'il ne reste aucun
+    # séparateur, donc un seul composant de chemin, donc aucune remontée possible.
+    assert pack.parent == lib
+    assert pack.relative_to(lib) == Path(pack.name)
+    assert "/" not in pack.name and pack.name not in ("..", ".")
+
+
+def test_safe_pack_name_neutralises_path_separators():
+    assert packlib.safe_pack_name("..") == "pack"
+    assert packlib.safe_pack_name("../../etc") == "_.._etc"
+    assert packlib.safe_pack_name("/etc/passwd") == "_etc_passwd"
+    assert packlib.safe_pack_name("Alt arts FR") == "Alt arts FR"     # inchangé

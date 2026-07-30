@@ -111,7 +111,7 @@ def test_restore_all_roundtrip(mgr, fake_install, tmp_path):
         originals[rel] = (fake_install.streaming_assets / rel).read_bytes()
     mgr.apply_playmat("Blue", make_png(tmp_path / "m.png"))
     mgr.apply_cardback(make_png(tmp_path / "cb.png"))
-    assert mgr.restore_all() == 2
+    assert mgr.restore_all() == {"restored": 2, "failed": []}
     for rel, data in originals.items():
         assert (fake_install.streaming_assets / rel).read_bytes() == data
 
@@ -169,4 +169,58 @@ def test_apply_pack_drag_and_drop_layout(mgr, fake_install, tmp_path):
     assert counts == {"cards": 1, "playmats": 1, "cardbacks": 1,
                       "backgrounds": 0, "translation": 1}
     assert "Button.Back=Retour" in fake_install.translation_file.read_text()
-    assert mgr.restore_all() == 4
+    assert mgr.restore_all() == {"restored": 4, "failed": []}
+
+
+# ------------------------------------------- P13.2 : le backup pristine survit à la perte du manifeste
+def test_backup_is_write_once_on_disk_even_if_manifest_lost(mgr, fake_install, tmp_path):
+    """La garantie de réversibilité ne doit pas dépendre de la survie de `manifest.json`.
+
+    Le chemin de backup est déterministe (sha1 de la cible). Si le manifeste disparaît (crash,
+    Ctrl-C dans `_save_manifest`, nettoyage), le swap SUIVANT ne doit pas sauvegarder le fichier
+    déjà modifié comme s'il était l'original — sinon `restore_all` restaure le thème précédent
+    en croyant restaurer le jeu d'origine, sans que rien ne le signale.
+    """
+    target = fake_install.streaming_assets / "Playmats" / "Blue.png"
+    original = target.read_bytes()
+
+    theme_a = make_png(tmp_path / "a.png", 1920, 1080)
+    theme_a.write_bytes(theme_a.read_bytes() + b"\x00THEME_A")     # empreinte distincte
+    mgr.apply_playmat("Blue", theme_a)
+    assert target.read_bytes() != original
+
+    # perte du manifeste, sur disque ET en mémoire (nouveau gestionnaire = nouveau process)
+    (tmp_path / "state" / "manifest.json").unlink()
+    mgr2 = AssetManager(fake_install, state_dir=tmp_path / "state")
+
+    theme_b = make_png(tmp_path / "b.png", 1920, 1080)
+    theme_b.write_bytes(theme_b.read_bytes() + b"\x00THEME_B")
+    mgr2.apply_playmat("Blue", theme_b)
+
+    rep = mgr2.restore_all()
+    assert target.read_bytes() == original          # l'ORIGINAL, pas le thème A
+    assert rep == {"restored": 1, "failed": []}
+
+
+# --------------------------------------------------- P13.3 : restore_all tolérant aux pannes
+def test_restore_all_continues_after_a_failure(mgr, fake_install, tmp_path):
+    """`restore-all` est la commande de secours : un échec ne doit pas laisser les swaps
+    suivants appliqués ni faire remonter une exception nue."""
+    playmat = fake_install.streaming_assets / "Playmats" / "Blue.png"
+    cardback = fake_install.streaming_assets / "CardBacks" / "CardBackRegular.png"
+    originals = {playmat: playmat.read_bytes(), cardback: cardback.read_bytes()}
+
+    mgr.apply_playmat("Blue", make_png(tmp_path / "m.png", 1920, 1080))
+    mgr.apply_cardback(make_png(tmp_path / "cb.png"))
+
+    # rend UNE restauration impossible : son backup n'est plus lisible
+    entry = next(e for k, e in mgr._manifest.items() if "Blue.png" in k)
+    Path(entry["backup"]).unlink()
+
+    rep = mgr.restore_all()                          # ne lève pas
+
+    assert rep["restored"] == 1
+    assert len(rep["failed"]) == 1
+    assert "Blue.png" in rep["failed"][0]["target"]
+    assert rep["failed"][0]["reason"]                # raison non vide, affichable en CLI
+    assert cardback.read_bytes() == originals[cardback]   # l'AUTRE swap est bien défait

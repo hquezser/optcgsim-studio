@@ -149,6 +149,12 @@ class AssetManager:
             return Path(self._manifest[key]["backup"])
         bk = (self.backup_dir / hashlib.sha1(key.encode()).hexdigest()
               ).with_suffix(target.suffix)
+        # Write-once sur DISQUE, pas seulement dans le manifeste : si `manifest.json` est perdu
+        # ou corrompu (crash, Ctrl-C dans `_save_manifest`, nettoyage), le swap suivant
+        # sauvegarderait le fichier DÉJÀ MODIFIÉ comme s'il était l'original — et `restore_all`
+        # restaurerait alors le thème précédent en croyant restaurer le jeu d'origine.
+        if bk.exists():
+            return bk
         shutil.copy2(target, bk)
         return bk
 
@@ -446,17 +452,27 @@ class AssetManager:
         del self._manifest[e["target"]]
         self._save_manifest()
 
-    def restore_all(self) -> int:
-        n = 0
+    def restore_all(self) -> dict:
+        """Restaure TOUT ce qui peut l'être et renvoie `{"restored": n, "failed": [...]}`.
+
+        `restore-all` est la commande de secours du projet : un échec sur une cible (dossier
+        devenu non écrivable après une màj du sim, cible refusée par `_guard_target`) ne doit
+        jamais laisser les swaps SUIVANTS en place. Même politique que `deckpack.resolve()` :
+        un échec n'interrompt pas les autres, il ressort dans le rapport.
+        """
+        n, failed = 0, []
         for key in list(self._manifest):
             entry = self._manifest[key]
             if Path(entry["target"]).exists():
-                self.restore(Path(entry["target"]))
-                n += 1
+                try:
+                    self.restore(Path(entry["target"]))
+                    n += 1
+                except (AssetError, OSError) as e:
+                    failed.append({"target": entry["target"], "reason": str(e)})
             else:   # cible disparue (màj du sim) : le backup n'a plus d'objet
                 del self._manifest[key]
                 self._save_manifest()
-        return n
+        return {"restored": n, "failed": failed}
 
     def restore_source(self, origin: str) -> int:
         """Restaure uniquement les cibles posées par un pack donné (`origin`).

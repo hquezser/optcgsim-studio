@@ -89,8 +89,14 @@ def cmd_assets_status(args) -> int:
 
 
 def cmd_assets_restore_all(args) -> int:
-    n = AssetManager(_install(args)).restore_all()
-    print(f"{n} fichiers restaurés à l'original.")
+    rep = AssetManager(_install(args)).restore_all()
+    print(f"{rep['restored']} fichiers restaurés à l'original.")
+    for f in rep["failed"]:
+        print(f"  ÉCHEC {Path(f['target']).name} : {f['reason']}")
+    if rep["failed"]:
+        print(f"{len(rep['failed'])} fichier(s) non restauré(s) — le jeu reste modifié pour "
+              "ceux-là. Corrige la cause puis relance `studio assets restore-all`.")
+        return 1
     return 0
 
 

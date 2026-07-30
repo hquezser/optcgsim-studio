@@ -125,6 +125,25 @@ def test_mirror_is_reversible(mgr, install, tmp_path):
     original = install.streaming_assets.joinpath("Playmats/Blue.png").read_bytes()
     mgr.apply_mirror(_themer_pack(tmp_path / "pack"))
     assert install.streaming_assets.joinpath("Playmats/Blue.png").read_bytes() != original
-    n = mgr.restore_all()
-    assert n == 5
+    rep = mgr.restore_all()
+    assert rep == {"restored": 5, "failed": []}
     assert install.streaming_assets.joinpath("Playmats/Blue.png").read_bytes() == original
+
+
+# ------------------------------------------------- P13.4 : une prévisualisation n'écrit JAMAIS
+def test_apply_mirror_dry_run_writes_nothing(mgr, install, tmp_path):
+    """Invariant du bouton « Prévisualiser » de l'UI : annoncer sans jamais toucher au jeu.
+
+    Verrouille le `continue` de la branche `dry_run` : le déplacer après le `_swap` (ou le
+    perdre) écraserait les fichiers du jeu pendant ce que l'utilisateur croit être une simple
+    analyse. Aucun autre test n'exerce `dry_run=True`.
+    """
+    sa = install.streaming_assets
+    before = {p: p.read_bytes() for p in sa.rglob("*") if p.is_file()}
+
+    rep = mgr.apply_mirror(_themer_pack(tmp_path / "pack"), dry_run=True)
+
+    assert rep["applied"]                            # le rapport annonce bien le travail
+    assert {p: p.read_bytes() for p in sa.rglob("*") if p.is_file()} == before
+    assert mgr.status() == []                        # aucun swap enregistré, rien à restaurer
+    assert not list(mgr.backup_dir.glob("*")) if mgr.backup_dir.exists() else True
