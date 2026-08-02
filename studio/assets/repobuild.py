@@ -98,11 +98,17 @@ class RepoBuildReport:
     unclassified: list = field(default_factory=list)  # {source, path}
     collisions: list = field(default_factory=list)    # {repo, rel}
     excluded_by_prefix: int = 0   # fichiers hors `path_prefix`, ignorés délibérément
+    # Fetch sélectif (`--path-prefix` sur un dépôt GitHub) : fichiers jamais récupérés — un
+    # dépôt de milliers de fichiers où quelques-uns sont temporairement indisponibles ne doit
+    # pas faire échouer tout le build. {source, path, reason}.
+    fetch_failed: list = field(default_factory=list)
 
     def summary(self) -> str:
         parts = [f"{s.files} fichiers/{s.bytes // (1024*1024)} Mo « {fam} »"
                  for fam, s in sorted(self.repos.items())]
         s = f"{len(self.sources)} source(s) → " + (", ".join(parts) or "aucun fichier classé")
+        if self.fetch_failed:
+            s += f" ; ⚠ {len(self.fetch_failed)} fichier(s) non récupéré(s)"
         if self.unclassified:
             s += f" ; {len(self.unclassified)} non classé(s)"
         if self.collisions:
@@ -190,13 +196,19 @@ def _in_prefix_scope(rel_str: str, cat: str, prefix: str | None) -> bool:
 
 
 def _ingest_scoped(source: str, work_dir: Path, prefix: str | None, token: str | None,
-                   ingest, on_progress: packlib.OnProgress) -> Path:
+                   ingest, on_progress: packlib.OnProgress,
+                   fetch_failed: list[dict] | None = None) -> Path:
     """Ingère UNE source, en tentant d'abord un fetch SÉLECTIF quand `prefix` est actif et que
     la source est explorable à distance (GitHub, cf. sourcefetch) — pour ne télécharger que ce
     qui sera gardé au lieu du dépôt entier (measuré ailleurs : 98 % d'économie). Repli sur
     `ingest` (téléchargement complet) si la source n'est pas explorable, si l'exploration
     échoue, ou si `prefix` n'est pas fourni (rien à économiser : tout serait gardé de toute
-    façon)."""
+    façon).
+
+    `fetch_failed`, si fourni, reçoit les fichiers que le fetch sélectif n'a PAS pu récupérer
+    (`strict=False` : ils sont sautés, pas fatals — un dépôt de milliers de fichiers où
+    quelques-uns sont temporairement indisponibles ne doit pas faire échouer tout le build).
+    """
     if prefix:
         from . import sourcefetch   # import local : évite un cycle, coût nul si non utilisé
         try:
@@ -207,7 +219,8 @@ def _ingest_scoped(source: str, work_dir: Path, prefix: str | None, token: str |
             kept = [rf.path for rf in remote
                     if _in_prefix_scope(rf.path, packlib.classify_rel(rf.path)[0], prefix)]
             return sourcefetch.fetch_selected(source, kept, work_dir / "selected",
-                                              token=token, on_progress=on_progress)
+                                              token=token, on_progress=on_progress,
+                                              strict=False, failed=fetch_failed)
     # `token=token` indispensable ici aussi : sans lui, un dépôt PRIVÉ dont l'exploration a
     # échoué retombe sur un téléchargement anonyme et échoue avec un message opaque, alors que
     # l'utilisateur a bien configuré son token (`add_pack` le passe déjà, lui).
@@ -288,7 +301,10 @@ def build(sources: list[str], out_dir: Path, *, cards_as: str = "alt",
 
     try:
         for si, src in enumerate(sources):
-            root = _ingest_scoped(src, work_dir / f"src{si}", prefix, token, ingest, on_progress)
+            fetch_failed: list[dict] = []
+            root = _ingest_scoped(src, work_dir / f"src{si}", prefix, token, ingest,
+                                  on_progress, fetch_failed=fetch_failed)
+            rep.fetch_failed.extend({"source": src, **f} for f in fetch_failed)
             for f in _iter_files(root):
                 rel = f.relative_to(root)
                 rel_str = str(rel).replace("\\", "/")

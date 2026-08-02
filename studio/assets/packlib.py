@@ -120,6 +120,11 @@ class PackReport:
     present_in_install: int = 0                        # combien de cibles existent déjà
     total_files: int = 0
     files: dict = field(default_factory=dict)          # rel -> sha1 (delta d'update)
+    # Import SÉLECTIF (P7) sur un dépôt GitHub : fichiers que `fetch_selected` n'a PAS pu
+    # récupérer (réseau flaky, 404 transitoire…), différent de `unclassified` (fichier présent
+    # mais non reconnu). Bénin par nature : la carte garde son art d'origine, pas celui du pack
+    # — réversible en relançant l'import. {path, reason}.
+    fetch_failed: list[dict] = field(default_factory=list)
 
     def summary(self) -> str:
         base = (f"{len(self.cards)} cartes, {len(self.playmats)} playmats, "
@@ -129,6 +134,9 @@ class PackReport:
                 f"{len(self.unclassified)} non classés")
         if self.filtered:
             base += f" ; {len(self.filtered)} hors périmètre (filtrés)"
+        if self.fetch_failed:
+            base += (f" ; ⚠ {len(self.fetch_failed)} fichier(s) non récupéré(s) "
+                     "(réessaie plus tard)")
         return base
 
 
@@ -514,7 +522,8 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
               source: str, lib_dir: Path = DEFAULT_LIB,
               on_progress: OnProgress = _noop_progress,
               only_categories: set[str] | None = None,
-              only_cards: set[str] | None = None) -> tuple[Path, PackReport]:
+              only_cards: set[str] | None = None,
+              fetch_failed: list[dict] | None = None) -> tuple[Path, PackReport]:
     """Écrit un pack canonique (miroir) dans `lib_dir/<name>/` et renvoie (chemin, rapport).
 
     Ne touche jamais au jeu. Idempotent : réécrit proprement le dossier du pack.
@@ -522,13 +531,17 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
     `only_categories`/`only_cards` : import SÉLECTIF (P7) — un fichier hors périmètre n'est
     PAS copié dans la bibliothèque (économie disque réelle) et ressort dans `rep.filtered`,
     distinct de `unclassified` (un exclu volontaire n'est pas une erreur de reconnaissance).
+
+    `fetch_failed` : fichiers que le fetch sélectif (`sourcefetch.fetch_selected`) n'a pas pu
+    récupérer, à reporter tels quels dans `rep.fetch_failed` — l'appelant (`add_pack`) les a
+    déjà collectés avant d'appeler cette fonction.
     """
     src_dir = Path(src_dir)
     pack_dir = _pack_dir_for(lib_dir, name)     # valide AVANT le rmtree ci-dessous
     if pack_dir.exists():
         shutil.rmtree(pack_dir)
     pack_dir.mkdir(parents=True)
-    rep = PackReport(name=name, source=source)
+    rep = PackReport(name=name, source=source, fetch_failed=list(fetch_failed or []))
     sa = install.streaming_assets
 
     # cible canonique -> fichier source retenu (pour gérer les variantes/collisions)
@@ -626,7 +639,7 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
         "cardbacks": sorted(rep.cardbacks), "backgrounds": sorted(rep.backgrounds),
         "translation": rep.translation, "present_in_install": rep.present_in_install,
         "unclassified": rep.unclassified, "variants": rep.variants,
-        "filtered": len(rep.filtered), "files": files,
+        "filtered": len(rep.filtered), "fetch_failed": rep.fetch_failed, "files": files,
     }, indent=1, ensure_ascii=False))
     return pack_dir, rep
 
@@ -654,6 +667,11 @@ def add_pack(source: str | Path, install: GameInstall, name: str | None = None,
 
     work = work_dir or (Path(lib_dir) / ".work")
     has_filter = only_categories is not None or only_cards is not None
+    # Fichiers du fetch sélectif jamais récupérés (réseau flaky, 404 transitoire…). Un dépôt
+    # de milliers de cartes alternatives où une poignée de fichiers est temporairement
+    # indisponible ne doit PAS faire perdre tout le reste : `strict=False` ci-dessous les
+    # saute et les consigne ici, au lieu de faire échouer tout l'import pour un seul fichier.
+    fetch_failed: list[dict] = []
     try:
         src = None
         # --- chemin fetch-sélectif (source explorable + filtre actif) ---
@@ -667,7 +685,8 @@ def add_pack(source: str | Path, install: GameInstall, name: str | None = None,
                 kept = [rf.path for rf in remote
                         if keep_rel(rf.path, only_categories, only_cards)]
                 src = sourcefetch.fetch_selected(str(source), kept, work / "selected",
-                                                 token=token, on_progress=on_progress)
+                                                 token=token, on_progress=on_progress,
+                                                 strict=False, failed=fetch_failed)
         # --- chemin complet (défaut / sources non explorables) ---
         if src is None:
             src = ingest(source, work, on_progress=on_progress, token=token)
@@ -682,7 +701,7 @@ def add_pack(source: str | Path, install: GameInstall, name: str | None = None,
         # déjà satisfait (no-op), sur le chemin complet c'est lui qui économise le disque.
         return normalize(src, install, pack_name, str(source), lib_dir,
                          on_progress=on_progress, only_categories=only_categories,
-                         only_cards=only_cards)
+                         only_cards=only_cards, fetch_failed=fetch_failed)
     finally:
         # Nettoyage systématique (succès COMME échec) : un ingest() qui échoue à mi-chemin ne
         # doit pas laisser de zip/dossier orphelin dans la bibliothèque.

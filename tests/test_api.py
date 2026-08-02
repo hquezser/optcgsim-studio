@@ -369,7 +369,7 @@ def test_add_with_leaders_only_filter(server, svc, tmp_path, monkeypatch):
               sourcefetch.RemoteFile("Cards/OP01/OP01-016.png", 1)]   # perso
     monkeypatch.setattr(sourcefetch, "list_remote_files", lambda url, token=None: remote)
     fetched = {}
-    def fake_fetch(url, paths, dest, token=None, on_progress=None):
+    def fake_fetch(url, paths, dest, token=None, on_progress=None, strict=True, failed=None):
         fetched["paths"] = list(paths)
         for p in paths:
             make_png(Path(dest) / p)

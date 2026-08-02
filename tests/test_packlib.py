@@ -221,3 +221,25 @@ def test_safe_pack_name_neutralises_path_separators():
     assert packlib.safe_pack_name("../../etc") == "_.._etc"
     assert packlib.safe_pack_name("/etc/passwd") == "_etc_passwd"
     assert packlib.safe_pack_name("Alt arts FR") == "Alt arts FR"     # inchangé
+
+
+# ---------------------- P15.7 : _repair_corrupted garde son exigence STRICTE (tout ou rien)
+def test_repair_corrupted_stays_strict_on_partial_success(tmp_path, monkeypatch):
+    """Contrairement à `add_pack`/`repos build`, une RÉPARATION partielle n'est pas une
+    réparation : si un seul fichier corrompu ne peut être re-téléchargé, `_repair_corrupted`
+    doit échouer entièrement (retour False -> repli sur un nouveau téléchargement complet),
+    pas déclarer le dépôt sain avec un fichier toujours cassé dedans."""
+    from studio.assets import packlib, sourcefetch
+
+    appels = {}
+
+    def fake_fetch(url, paths, dest, token=None, on_progress=None, strict=True, failed=None):
+        appels["strict"] = strict
+        raise sourcefetch.FetchError("simulé : un des deux fichiers reste introuvable")
+
+    monkeypatch.setattr(sourcefetch, "fetch_selected", fake_fetch)
+    ok = packlib._repair_corrupted(tmp_path / "out", ["a.png", "b.png"],
+                                   "https://github.com/o/r", None, packlib._noop_progress)
+
+    assert ok is False, "un échec partiel doit faire échouer TOUTE la réparation"
+    assert appels["strict"] is True, "_repair_corrupted doit demander le mode STRICT"

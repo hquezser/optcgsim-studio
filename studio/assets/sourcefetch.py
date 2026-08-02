@@ -138,17 +138,55 @@ def list_remote_files(source_url: str, token: str | None = None) -> list[RemoteF
             for t in data.get("tree", []) if t.get("type") == "blob"]
 
 
+def _fetch_one_file(owner: str, repo: str, branch: str, rel: str, token: str | None) -> bytes:
+    """Octets d'UN fichier du dépôt. CDN `raw.githubusercontent.com` en priorité — PAS l'API
+    REST `api.github.com`, plafonnée à 60 requêtes/heure SANS authentification (un dossier de
+    quelques centaines de cartes l'épuise en une seule commande ; rencontré en usage réel sur
+    le vrai repo FR, dépôt PUBLIC pourtant). Repli sur l'API Contents UNIQUEMENT si le CDN
+    échoue pour CE chemin (édge-case, ou dépôt privé si le CDN ne l'honore pas).
+
+    Le repli réagit à `URLError` en plus de `FetchError` : une simple coupure réseau sur le
+    CDN (pas seulement un refus HTTP) doit aussi donner sa chance à l'API Contents — avant,
+    seul `FetchError` déclenchait le repli, une erreur réseau brute abandonnait direct.
+    """
+    raw_url = (f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/"
+              f"{urllib.request.quote(rel)}")
+    try:
+        return _gh_request(raw_url, token)
+    except (FetchError, urllib.error.URLError):
+        pass   # repli sur l'API Contents ci-dessous
+    api = (f"https://api.github.com/repos/{owner}/{repo}/contents/"
+          f"{urllib.request.quote(rel)}?ref={branch}")
+    meta = json.loads(_gh_request(api, token))
+    content = meta.get("content")
+    if content is None or meta.get("encoding") != "base64":
+        # gros fichiers (>1 Mo) : l'API Contents renvoie sans contenu inline -> download_url
+        durl = meta.get("download_url")
+        if not durl:
+            raise FetchError(f"Contenu indisponible pour {rel}")
+        return _gh_request(durl, token)
+    return base64.b64decode(content)
+
+
 def fetch_selected(source_url: str, paths: list[str], dest: Path,
                    token: str | None = None,
-                   on_progress: OnProgress = _noop) -> Path:
+                   on_progress: OnProgress = _noop,
+                   strict: bool = True,
+                   failed: list[dict] | None = None) -> Path:
     """Télécharge UNIQUEMENT `paths` (chemins relatifs du dépôt) dans `dest`, layout préservé.
+    Renvoie `dest`.
 
-    Contenu par fichier via le CDN `raw.githubusercontent.com` — PAS l'API REST
-    `api.github.com`, plafonnée à 60 requêtes/heure SANS authentification (un dossier de
-    quelques centaines de cartes l'épuise en une seule commande ; rencontré en usage réel sur
-    le vrai repo FR, dépôt PUBLIC pourtant). Le CDN a une limite bien plus généreuse et pas de
-    surcoût base64. Repli sur l'API Contents (`api.github.com`) UNIQUEMENT si le CDN échoue
-    pour un chemin donné (édge-case, ou dépôt privé si le CDN ne l'honore pas). Renvoie `dest`.
+    `strict` (par défaut `True`, comportement historique) : la PREMIÈRE erreur sur un fichier
+    fait échouer tout l'appel. C'est ce qu'exige `_repair_corrupted` (packlib) : un dépôt
+    « réparé » à moitié n'est pas réparé, mieux vaut retomber sur un téléchargement complet.
+
+    `strict=False` (import sélectif normal, `repos build --path-prefix`) : un fichier en échec
+    est SAUTÉ et consigné dans `failed` (si fourni, `{"path", "reason"}`) — les autres
+    continuent. N'échoue que si RIEN n'a pu être récupéré (`paths` non vide, zéro succès) :
+    un pack vide en silence serait pire qu'une erreur explicite. C'est le cas réel visé : un
+    dépôt de milliers de cartes alternatives où une poignée de fichiers est temporairement
+    indisponible ne doit pas faire perdre tout le reste — l'art d'origine reste en place pour
+    les cartes non récupérées, réversible en relançant l'import plus tard.
     """
     parts = _gh_parts(source_url)
     if parts is None:
@@ -156,28 +194,20 @@ def fetch_selected(source_url: str, paths: list[str], dest: Path,
     owner, repo, branch = parts
     dest = Path(dest)
     total = len(paths)
+    reussis = 0
     for i, rel in enumerate(paths, 1):
         on_progress("download", i, total)
         out = dest / rel
         out.parent.mkdir(parents=True, exist_ok=True)
-        raw_url = (f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/"
-                  f"{urllib.request.quote(rel)}")
         try:
-            out.write_bytes(_gh_request(raw_url, token))
-            continue
-        except FetchError:
-            pass   # repli sur l'API Contents ci-dessous
-        api = (f"https://api.github.com/repos/{owner}/{repo}/contents/"
-               f"{urllib.request.quote(rel)}?ref={branch}")
-        meta = json.loads(_gh_request(api, token))
-        content = meta.get("content")
-        if content is None or meta.get("encoding") != "base64":
-            # gros fichiers (>1 Mo) : l'API Contents renvoie sans contenu inline -> download_url
-            durl = meta.get("download_url")
-            if not durl:
-                raise FetchError(f"Contenu indisponible pour {rel}")
-            raw = _gh_request(durl, token)
-        else:
-            raw = base64.b64decode(content)
-        out.write_bytes(raw)
+            out.write_bytes(_fetch_one_file(owner, repo, branch, rel, token))
+            reussis += 1
+        except (FetchError, urllib.error.URLError) as e:
+            if strict:
+                raise
+            if failed is not None:
+                failed.append({"path": rel, "reason": str(e)})
+    if not strict and paths and reussis == 0:
+        raise FetchError(f"Aucun des {len(paths)} fichier(s) n'a pu être récupéré — "
+                         "vérifie la connexion ou le token GitHub.")
     return dest

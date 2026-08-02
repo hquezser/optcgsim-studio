@@ -1,5 +1,6 @@
 """Tests de l'import sélectif (P7-d) : filtres only_categories / only_cards."""
 
+import json
 import struct
 import zlib
 from pathlib import Path
@@ -132,7 +133,7 @@ def test_add_pack_uses_selective_fetch_when_available(install, tmp_path, monkeyp
               sourcefetch.RemoteFile("Playmats/Blue.png", 100)]
     monkeypatch.setattr(sourcefetch, "list_remote_files", lambda url, token=None: remote)
     fetched = {}
-    def fake_fetch(url, paths, dest, token=None, on_progress=None):
+    def fake_fetch(url, paths, dest, token=None, on_progress=None, strict=True, failed=None):
         fetched["paths"] = paths
         for p in paths:
             make_png(Path(dest) / p, 1920, 1080) if "Playmats" in p else make_png(Path(dest) / p)
@@ -145,3 +146,37 @@ def test_add_pack_uses_selective_fetch_when_available(install, tmp_path, monkeyp
     # seul le leader a été TÉLÉCHARGÉ (pas juste filtré au disque)
     assert fetched["paths"] == ["Cards/OP01/OP01-001.png"]
     assert rep.cards == ["OP01-001"]
+
+
+# ------------------------------------------- P15.7 : un fichier en échec ne perd pas le pack
+def test_add_pack_survives_a_partial_selective_fetch_failure(install, tmp_path, monkeypatch):
+    """Le cas réel : un dépôt de cartes alternatives où un fichier échoue (réseau flaky,
+    404 transitoire) — les autres doivent quand même arriver dans le pack, et l'échec doit
+    être VISIBLE dans le rapport, pas silencieux."""
+    from studio.assets import sourcefetch
+    remote = [sourcefetch.RemoteFile("Cards/OP01/OP01-001.png", 100),
+              sourcefetch.RemoteFile("Cards/OP01/OP01-016.png", 100)]
+    monkeypatch.setattr(sourcefetch, "list_remote_files", lambda url, token=None: remote)
+
+    def fake_fetch(url, paths, dest, token=None, on_progress=None, strict=True, failed=None):
+        assert strict is False, "add_pack doit demander la tolérance, pas le mode strict"
+        for p in paths:
+            if "OP01-016" in p:
+                if failed is not None:
+                    failed.append({"path": p, "reason": "simulé : 404 transitoire"})
+                continue
+            make_png(Path(dest) / p)
+        return Path(dest)
+    monkeypatch.setattr(sourcefetch, "fetch_selected", fake_fetch)
+
+    pack, rep = packlib.add_pack("https://github.com/o/r", install, name="Partiel",
+                                 lib_dir=tmp_path / "lib", work_dir=tmp_path / "w",
+                                 only_categories={"cards"})
+
+    assert rep.cards == ["OP01-001"], "le fichier récupéré est bien dans le pack"
+    assert rep.fetch_failed == [{"path": "Cards/OP01/OP01-016.png",
+                                 "reason": "simulé : 404 transitoire"}]
+    assert "non récupéré" in rep.summary()
+    manifest = json.loads((pack / "manifest.json").read_text())
+    assert manifest["fetch_failed"] == rep.fetch_failed, (
+        "l'échec doit survivre au redémarrage du studio (persisté dans le manifeste)")

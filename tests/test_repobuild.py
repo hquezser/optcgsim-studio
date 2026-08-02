@@ -441,7 +441,7 @@ def test_build_uses_selective_fetch_when_github_and_prefix(tmp_path, monkeypatch
     monkeypatch.setattr(sourcefetch, "list_remote_files", lambda url, token=None: remote)
     fetched = {}
 
-    def fake_fetch(url, paths, dest, token=None, on_progress=None):
+    def fake_fetch(url, paths, dest, token=None, on_progress=None, strict=True, failed=None):
         fetched["paths"] = sorted(paths)
         for p in paths:
             (Path(dest) / p).parent.mkdir(parents=True, exist_ok=True)
@@ -472,7 +472,7 @@ def test_build_passes_token_to_selective_fetch(tmp_path, monkeypatch):
         seen_tokens["list"] = token
         return remote
 
-    def fake_fetch(url, paths, dest, token=None, on_progress=None):
+    def fake_fetch(url, paths, dest, token=None, on_progress=None, strict=True, failed=None):
         seen_tokens["fetch"] = token
         for p in paths:
             make_png(Path(dest) / p)
@@ -550,7 +550,7 @@ def test_repair_corrupted_patches_via_sourcefetch(tmp_path, monkeypatch):
     from studio.assets import sourcefetch
     patched = {}
 
-    def fake_fetch(url, paths, dest, token=None, on_progress=None):
+    def fake_fetch(url, paths, dest, token=None, on_progress=None, strict=True, failed=None):
         patched["paths"] = paths
         for p in paths:
             (Path(dest) / p).parent.mkdir(parents=True, exist_ok=True)
@@ -588,7 +588,7 @@ def test_ingest_patches_corrupted_member_instead_of_redownloading_everything(tmp
 
     patched = {}
 
-    def fake_fetch(url, paths, dest, token=None, on_progress=None):
+    def fake_fetch(url, paths, dest, token=None, on_progress=None, strict=True, failed=None):
         patched["paths"] = paths
         for p in paths:
             (Path(dest) / p).parent.mkdir(parents=True, exist_ok=True)
@@ -843,3 +843,39 @@ def test_build_does_not_delete_a_work_dir_it_was_given(tmp_path):
     repobuild.build(["s"], tmp_path / "out", work_dir=impose, git_init=False,
                     ingest=ingest_realiste)
     assert (impose / "temoin.txt").exists(), "un work_dir imposé ne doit pas être supprimé"
+
+
+# ---------------------------------------- P15.7 : un fichier en échec ne perd pas le build
+def test_build_survives_a_partial_selective_fetch_failure(tmp_path):
+    """Même garantie que packlib.add_pack, côté `repos build --path-prefix` : un fichier en
+    échec est signalé, pas fatal — le reste du build aboutit."""
+    from studio.assets import sourcefetch
+    remote = [sourcefetch.RemoteFile("FR_classique/OP01/OP01-001.png", 100),
+              sourcefetch.RemoteFile("FR_classique/OP01/OP01-002.png", 100)]
+
+    def fake_list(url, token=None):
+        return remote
+
+    def fake_fetch(url, paths, dest, token=None, on_progress=None, strict=True, failed=None):
+        assert strict is False
+        for p in paths:
+            (Path(dest) / p).parent.mkdir(parents=True, exist_ok=True)
+            if "OP01-002" in p:
+                if failed is not None:
+                    failed.append({"path": p, "reason": "simulé : coupure réseau"})
+                continue
+            make_png(Path(dest) / p)
+        return Path(dest)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(sourcefetch, "list_remote_files", fake_list)
+        mp.setattr(sourcefetch, "fetch_selected", fake_fetch)
+        out = tmp_path / "out"
+        rep = repobuild.build(["https://github.com/o/r"], out, cards_as="alt",
+                              path_prefix="FR_classique", git_init=False)
+
+    assert rep.repos["cards-alt"].files == 1, "le fichier récupéré doit être dans le dépôt"
+    assert rep.fetch_failed == [{"source": "https://github.com/o/r",
+                                "path": "FR_classique/OP01/OP01-002.png",
+                                "reason": "simulé : coupure réseau"}]
+    assert "non récupéré" in rep.summary()

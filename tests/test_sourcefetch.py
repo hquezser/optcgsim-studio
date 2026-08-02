@@ -169,3 +169,74 @@ def test_subfolder_url_is_still_recognised_as_github():
     assert _gh_parts("https://github.com/o/r.git") == ("o", "r", "main")
     assert gh_subpath("https://github.com/o/r/tree/main") is None
     assert _gh_parts("https://gitlab.com/o/r") is None
+
+
+# ------------------------------------------ P15.7 : tolérance aux échecs partiels (cartes alt)
+def test_fetch_selected_tolerant_skips_failing_files_and_keeps_the_rest(monkeypatch, tmp_path):
+    """Cas réel visé : un dépôt de cartes alternatives où quelques fichiers sont
+    temporairement indisponibles (404, coupure) ne doit PAS faire perdre tout le reste — la
+    carte non récupérée garde simplement son art d'origine dans le jeu."""
+    def fake(url, token):
+        if "casse.png" in url:
+            raise sf.FetchError("simulé : 404 transitoire")
+        return b"OK-" + url.encode()[-8:]
+    monkeypatch.setattr(sf, "_gh_request", fake)
+
+    echecs: list[dict] = []
+    dest = sf.fetch_selected("https://github.com/o/r",
+                             ["Cards/OP01/bon1.png", "Cards/OP01/casse.png",
+                              "Cards/OP01/bon2.png"],
+                             tmp_path / "out", strict=False, failed=echecs)
+
+    assert (dest / "Cards" / "OP01" / "bon1.png").exists()
+    assert (dest / "Cards" / "OP01" / "bon2.png").exists()
+    assert not (dest / "Cards" / "OP01" / "casse.png").exists()
+    assert [e["path"] for e in echecs] == ["Cards/OP01/casse.png"]
+    assert echecs[0]["reason"]
+
+
+def test_fetch_selected_tolerant_raises_if_nothing_succeeds(monkeypatch, tmp_path):
+    """Un pack vide en silence serait pire qu'une erreur explicite : si RIEN n'a pu être
+    récupéré, `strict=False` échoue quand même."""
+    monkeypatch.setattr(sf, "_gh_request",
+                        lambda url, token: (_ for _ in ()).throw(
+                            sf.FetchError("simulé : tout échoue")))
+    with pytest.raises(sf.FetchError):
+        sf.fetch_selected("https://github.com/o/r", ["a.png", "b.png"], tmp_path / "out",
+                          strict=False, failed=[])
+
+
+def test_fetch_selected_strict_still_aborts_on_first_failure(monkeypatch, tmp_path):
+    """`strict=True` (défaut) : comportement historique préservé — c'est ce qu'exige
+    `_repair_corrupted` (un dépôt réparé à moitié n'est pas réparé)."""
+    def fake(url, token):
+        if "casse.png" in url:
+            raise sf.FetchError("simulé")
+        return b"OK"
+    monkeypatch.setattr(sf, "_gh_request", fake)
+    with pytest.raises(sf.FetchError):
+        sf.fetch_selected("https://github.com/o/r",
+                         ["bon.png", "casse.png", "jamais-tente.png"], tmp_path / "out")
+    assert not (tmp_path / "out" / "jamais-tente.png").exists(), (
+        "en strict, l'arrêt doit être immédiat — le fichier suivant n'est pas tenté")
+
+
+def test_fetch_selected_tolerant_recovers_from_raw_urlerror_not_just_fetcherror(
+        monkeypatch, tmp_path):
+    """Avant : seul `FetchError` déclenchait le repli CDN -> API Contents. Une coupure réseau
+    brute (URLError non enveloppée) abandonnait le fichier sans même tenter le repli."""
+    import urllib.error
+    appels = []
+
+    def fake(url, token):
+        appels.append(url)
+        if "raw.githubusercontent.com" in url:
+            raise urllib.error.URLError("simulé : coupure réseau brute (pas un FetchError)")
+        return json.dumps({"content": base64.b64encode(b"VIA-CONTENTS-API").decode(),
+                           "encoding": "base64"}).encode()
+
+    monkeypatch.setattr(sf, "_gh_request", fake)
+    dest = sf.fetch_selected("https://github.com/o/r", ["Cards/OP01/OP01-001.png"],
+                             tmp_path / "out")
+    assert (dest / "Cards" / "OP01" / "OP01-001.png").read_bytes() == b"VIA-CONTENTS-API"
+    assert len(appels) == 2, "le CDN a échoué, l'API Contents doit avoir été tentée ensuite"
