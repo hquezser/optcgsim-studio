@@ -185,3 +185,27 @@ def test_ordinary_relative_file_still_resolves(tmp_path):
     rep = deckpack.resolve({"name": "P", "decks": [
         {"name": "Zoro", "file": "decks/z.txt"}]}, pack_dir)
     assert len(rep.imported) == 1 and rep.imported[0].deck.leader == "PRB01-001"
+
+
+# ----------------------------------------------------- LOT D : URL de deckpack.json nu
+# `studio decks import-pack https://…/deckpack.json` — bout-en-bout via `from_source` avec
+# le VRAI `packlib.ingest` (réseau simulé par monkeypatch de `_download`).
+def test_from_source_http_json_url_end_to_end(tmp_path, monkeypatch):
+    """L'URL d'un `deckpack.json` nu ingérée par `packlib.ingest` puis résolue par
+    `from_source` — le cas d'usage utilisateur exact visé par le LOT D."""
+    from studio.assets import packlib
+
+    blob = json.dumps({"name": "P", "decks": [{"name": "S", "text": VALID}]}).encode()
+
+    def fake_download(url, dest_zip, timeout=60.0, on_progress=packlib._noop_progress):
+        dest_zip.write_bytes(blob)
+        return "application/json"
+
+    monkeypatch.setattr(packlib, "_download", fake_download)
+    monkeypatch.setattr(packlib, "_resolve_url", lambda u: u)
+
+    rep = deckpack.from_source("https://site.example/deckpack.json",
+                               packlib.ingest, tmp_path / "work")
+    assert rep.imported[0].name == "S"
+    assert rep.imported[0].deck.leader == "PRB01-001"
+    assert not (tmp_path / "work").exists()      # nettoyage post-ingest

@@ -278,15 +278,19 @@ def _repair_corrupted(out: Path, corrupted: list[str], source_url: str, token: s
 
 
 def _download(url: str, dest_zip: Path, timeout: float = 60.0,
-             on_progress: OnProgress = _noop_progress) -> None:
+             on_progress: OnProgress = _noop_progress) -> str | None:
     """Télécharge en streaming (1 Mo/bloc). Les dossiers communautaires complets peuvent
     peser plusieurs centaines de Mo (ex. « Alt Cards Jon » ≈ 614 Mo) : `on_progress` permet
     à l'appelant (CLI, API) d'afficher une progression pour que ça ne ressemble pas à un
-    blocage — packlib ne fait aucune hypothèse sur la présentation (terminal, JSON de job…)."""
+    blocage — packlib ne fait aucune hypothèse sur la présentation (terminal, JSON de job…).
+
+    Renvoie le `Content-Type` de la réponse (ou None si l'en-tête est absent) — utilisé par
+    `ingest` pour reconnaître une URL servant un `deckpack.json` nu (cf. `_looks_like_json`)."""
     req = urllib.request.Request(url, headers={"User-Agent": "optcgsim-studio/0.1"})
     try:
         with urllib.request.urlopen(  # noqa: S310 (schéma vérifié)
                 req, timeout=timeout, context=ssl_context()) as resp:
+            ctype = resp.headers.get("Content-Type")
             total = int(resp.headers.get("Content-Length") or 0)
             done = 0
             with dest_zip.open("wb") as out:
@@ -294,6 +298,7 @@ def _download(url: str, dest_zip: Path, timeout: float = 60.0,
                     out.write(chunk)
                     done += len(chunk)
                     on_progress("download", done, total)
+            return ctype
     except urllib.error.URLError as e:
         # urlopen() enveloppe TOUJOURS un échec de handshake SSL dans un URLError (le
         # ssl.SSLCertVerificationError brut ne remonte jamais tel quel) : is_cert_error
@@ -302,6 +307,38 @@ def _download(url: str, dest_zip: Path, timeout: float = 60.0,
         if is_cert_error(e):
             raise PackError(CERT_FIX_HINT) from e
         raise
+
+
+def _looks_like_json(path: Path, url: str, content_type: str | None) -> bool:
+    """Détection robuste d'un fichier JSON téléchargé (cas d'une URL de `deckpack.json` nu).
+
+    Trois signaux INDÉPENDANTS — un seul suffit (chacun peut manquer ou mentir, aucun n'est
+    fiable seul) :
+      1. extension du chemin de l'URL `.json` (en ignorant query/fragment — une URL peut
+         porter `?token=…` ou `#anchor`) ;
+      2. `Content-Type` de la réponse `application/json` ou `…/…+json` ;
+      3. premier octet non blanc du fichier qui est `{` (un JSON objet commence toujours
+         ainsi, et un zip commence par `PK` — pas de faux positif sur une archive).
+
+    Le contenu (signal 3) est le plus sûr : une URL sans extension (ex. raw GitHub sans
+    `.json`, ou un CDN servant du JSON avec un Content-Type générique) reste détectée.
+    """
+    u = urllib.parse.urlparse(url)
+    if u.path.lower().endswith(".json"):
+        return True
+    if isinstance(content_type, str):
+        ct = content_type.lower()
+        if "application/json" in ct or "+json" in ct:
+            return True
+    try:
+        head = path.read_bytes()[:4096]
+    except OSError:
+        return False
+    for b in head:
+        if b in b" \t\r\n":
+            continue
+        return b == 0x7B           # '{'
+    return False
 
 
 def _resolve_url(url: str) -> str:
@@ -426,8 +463,12 @@ def ingest(source: str | Path, work_dir: Path,
         last_err = None
         for attempt in range(1, _MAX_DOWNLOAD_ATTEMPTS + 1):
             try:
-                _download(url, zpath, on_progress=on_progress)
-                out, corrupted = _materialize(zpath, work_dir / "extracted", None, on_progress)
+                ctype = _download(url, zpath, on_progress=on_progress)
+                # URL servant un `deckpack.json` nu (ou tout JSON) : on le matérialise sous
+                # ce nom pour que `deckpack.find_manifest` le trouve. Sinon comportement
+                # inchangé (zip extrait, ou fichier unique copié sous `download.zip`).
+                orig = "deckpack.json" if _looks_like_json(zpath, url, ctype) else None
+                out, corrupted = _materialize(zpath, work_dir / "extracted", orig, on_progress)
                 if corrupted and not _repair_corrupted(out, corrupted, s, token, on_progress):
                     raise zipfile.BadZipFile(
                         f"CRC invalide pour {len(corrupted)} fichier(s), patch impossible : "

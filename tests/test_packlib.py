@@ -243,3 +243,107 @@ def test_repair_corrupted_stays_strict_on_partial_success(tmp_path, monkeypatch)
 
     assert ok is False, "un échec partiel doit faire échouer TOUTE la réparation"
     assert appels["strict"] is True, "_repair_corrupted doit demander le mode STRICT"
+
+
+# ----------------------------------------------------- LOT D : URL de deckpack.json nu
+# Avant : coller l'URL d'un `deckpack.json` (le cas le plus évident pour un utilisateur)
+# échouait avec un message trompeur — `_materialize` copiait le JSON sous `download.zip` et
+# `find_manifest` ne trouvait rien. Désormais `ingest` détecte le JSON (URL + Content-Type +
+# 1er octet) et le matérialise sous `deckpack.json`.
+def _fake_download_writing(payload: bytes, content_type: str | None = None):
+    """Fabrique un `_download` qui écrit `payload` sur disque et renvoie le Content-Type."""
+    def fake(url, dest_zip, timeout=60.0, on_progress=packlib._noop_progress):
+        dest_zip.write_bytes(payload)
+        return content_type
+    return fake
+
+
+def test_ingest_http_json_url_materialized_as_deckpack_json(tmp_path, monkeypatch):
+    """Une URL https://…/deckpack.json est matérialisée sous ce nom (le cas d'usage visé)."""
+    blob = b'{"name":"P","decks":[]}'
+    monkeypatch.setattr(packlib, "_download",
+                        _fake_download_writing(blob, "application/json"))
+    monkeypatch.setattr(packlib, "_resolve_url", lambda u: u)
+    out = packlib.ingest("https://site.example/deckpack.json", tmp_path / "w")
+    assert (out / "deckpack.json").read_bytes() == blob
+
+
+def test_ingest_http_json_url_detected_by_first_byte_when_no_extension(tmp_path, monkeypatch):
+    """URL sans extension `.json` et Content-Type générique : le 1er octet `{` suffit.
+
+    Cas réel : un CDN/raw GitHub servant du JSON sans extension, ou avec un Content-Type
+    `text/plain` (certains serveurs mal configurés). Le contenu est le signal le plus sûr."""
+    blob = b'  \n\t{"name":"P","decks":[]}'   # espaces de tête tolérés
+    monkeypatch.setattr(packlib, "_download",
+                        _fake_download_writing(blob, "text/plain"))
+    monkeypatch.setattr(packlib, "_resolve_url", lambda u: u)
+    out = packlib.ingest("https://site.example/raw/pack", tmp_path / "w")
+    assert (out / "deckpack.json").read_bytes() == blob
+
+
+def test_ingest_http_json_url_with_query_string_extension(tmp_path, monkeypatch):
+    """Une URL portant une query string `?token=…` reste détectée via le chemin de l'URL."""
+    blob = b'{"name":"P","decks":[]}'
+    monkeypatch.setattr(packlib, "_download",
+                        _fake_download_writing(blob, "application/json"))
+    monkeypatch.setattr(packlib, "_resolve_url", lambda u: u)
+    out = packlib.ingest("https://site.example/pack.json?token=abc&dl=1", tmp_path / "w")
+    assert (out / "deckpack.json").exists()
+
+
+def test_ingest_http_json_url_with_json_content_type_only(tmp_path, monkeypatch):
+    """Content-Type `application/json` seul (URL sans `.json`) suffit à détecter le JSON."""
+    blob = b'{"name":"P","decks":[]}'
+    monkeypatch.setattr(packlib, "_download",
+                        _fake_download_writing(blob, "application/json; charset=utf-8"))
+    monkeypatch.setattr(packlib, "_resolve_url", lambda u: u)
+    out = packlib.ingest("https://site.example/api/pack", tmp_path / "w")
+    assert (out / "deckpack.json").exists()
+
+
+def test_ingest_http_zip_url_unchanged_by_json_detection(tmp_path, monkeypatch):
+    """Non-régression : une URL de .zip reste extraite (le 1er octet `PK` n'est pas `{`)."""
+    src = tmp_path / "content"
+    make_png(src / "Cards" / "OP01" / "OP01-001.png")
+    zpath = tmp_path / "pack.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.write(src / "Cards" / "OP01" / "OP01-001.png", "Cards/OP01/OP01-001.png")
+    monkeypatch.setattr(packlib, "_download",
+                        _fake_download_writing(zpath.read_bytes(), "application/zip"))
+    monkeypatch.setattr(packlib, "_resolve_url", lambda u: u)
+    out = packlib.ingest("https://site.example/pack.zip", tmp_path / "w")
+    assert (out / "Cards" / "OP01" / "OP01-001.png").exists()
+    assert not (out / "deckpack.json").exists()
+
+
+def test_ingest_http_non_json_non_zip_file_keeps_legacy_name(tmp_path, monkeypatch):
+    """Non-régression : un fichier unique ni zip ni JSON reste copié sous `download.zip`
+    (comportement d'avant — une image partagée par URL n'est pas un pack, on ne le devine
+    pas en `deckpack.json`)."""
+    png = tmp_path / "x.png"
+    make_png(png)
+    monkeypatch.setattr(packlib, "_download",
+                        _fake_download_writing(png.read_bytes(), "image/png"))
+    monkeypatch.setattr(packlib, "_resolve_url", lambda u: u)
+    out = packlib.ingest("https://site.example/card.png", tmp_path / "w")
+    assert (out / "download.zip").exists()      # nom historique préservé
+    assert not (out / "deckpack.json").exists()
+
+
+def test_looks_like_json_unit_signals(tmp_path):
+    """Les trois signaux de `_looks_like_json` couverts isolément + les faux positifs exclus."""
+    p = tmp_path / "blob"
+    p.write_bytes(b'{"a":1}')
+    assert packlib._looks_like_json(p, "https://x/y.json", None)
+    assert packlib._looks_like_json(p, "https://x/y", "application/json")
+    assert packlib._looks_like_json(p, "https://x/y", "application/vnd.deckpack+json")
+    assert packlib._looks_like_json(p, "https://x/y", None)            # 1er octet '{'
+    p.write_bytes(b"  \r\n\t{")
+    assert packlib._looks_like_json(p, "https://x/y", None)            # espaces de tête
+    # Faux positifs exclus : zip (PK), image (PNG), texte non-JSON.
+    p.write_bytes(b"PK\x03\x04")
+    assert not packlib._looks_like_json(p, "https://x/y.zip", "application/zip")
+    p.write_bytes(b"\x89PNG\r\n\x1a\n")
+    assert not packlib._looks_like_json(p, "https://x/y.png", "image/png")
+    p.write_bytes(b"not json at all")
+    assert not packlib._looks_like_json(p, "https://x/y.txt", "text/plain")
