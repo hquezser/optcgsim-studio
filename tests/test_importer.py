@@ -66,19 +66,38 @@ def test_wrong_size_rejected():
         parse_text("1xOP01-060\n" + "\n".join(f"4xAA{i:02d}-001" for i in range(12)) + "\n1xBB01-001")
 
 
-def test_more_than_four_copies_rejected():
+def test_more_than_four_copies_accepted_with_warning():
+    # Une liste publiée est présumée légale : on n'échoue pas, on relève (⚠). La carte est
+    # inconnue de la table embarquée, donc l'anomalie reste signalée.
     text = ("1xOP01-060\n5xAA01-001\n" + "\n".join(f"4xBB{i:02d}-001" for i in range(11)) + "\n1xCC01-001")
-    with pytest.raises(ImportError_, match="max 4"):
-        parse_text(text)
+    deck = parse_text(text)
+    assert deck.cards["AA01-001"] == 5
+    assert deck.total == 50
+    assert any("AA01-001" in w and "5 exemplaires" in w for w in deck.warnings)
 
 
-def test_unlimited_card_beyond_four_accepted():
+def test_unlimited_card_beyond_four_accepted_without_warning():
     # OP16-042 « Prisoner of Impel Down » : « you may have any number of this card in your
     # deck ». Deck réel (Green/Blue Luffy, Treasure Cup Utrecht 2026) : 9 exemplaires.
     text = ("1xOP16-022\n9xOP16-042\n" + "\n".join(f"4xBB{i:02d}-001" for i in range(10)) + "\n1xCC01-001")
     deck = parse_text(text)
     assert deck.cards["OP16-042"] == 9
     assert deck.total == 50
+    assert deck.warnings == []
+
+
+def test_validate_resets_warnings_between_calls():
+    cards = {"AA01-001": 9, "CC01-001": 1} | {f"BB{i:02d}-001": 4 for i in range(10)}
+    deck = Decklist(leader="OP01-060", cards=cards)      # 9 + 1 + 40 = 50
+    deck.validate()
+    deck.validate()
+    assert len(deck.warnings) == 1                       # pas d'accumulation
+
+
+def test_truncated_import_still_rejected():
+    # Le garde-fou réel contre un import corrompu reste le total de 50 cartes.
+    with pytest.raises(ImportError_, match="45 cartes"):
+        parse_text("1xOP01-060\n9xAA01-001\n" + "\n".join(f"4xBB{i:02d}-001" for i in range(9)))
 
 
 def test_zero_copies_rejected():

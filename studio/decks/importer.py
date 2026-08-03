@@ -12,8 +12,10 @@ Le format pivot est le format NATIF du sim (observé dans ses .txt réels) :
     4xOP09-002
     ...
 
-Règles OPTCG validées à l'import : exactement 1 leader + 50 cartes, ≤ 4 exemplaires par id —
-sauf pour la poignée de cartes dont le texte lève lui-même la limite (`cardmeta.is_unlimited`).
+Règles OPTCG validées à l'import (bloquantes) : exactement 1 leader + 50 cartes, ids valides.
+Le dépassement de 4 exemplaires ne bloque pas — certaines cartes lèvent elles-mêmes la limite
+(`cardmeta.is_unlimited`) et la table embarquée n'est qu'un instantané : une liste publiée est
+présumée légale. Il est seulement relevé dans `Decklist.warnings` (⚠ non bloquant).
 
 Note de robustesse : les sites majeurs (NakamaDecks, EgmanEvents, LimitlessTCG) offrent tous
 un bouton « Export OPTCGSim » qui produit exactement le format natif — le duo export-bouton →
@@ -53,12 +55,22 @@ class Decklist:
     cards: dict[str, int] = field(default_factory=dict)   # hors leader
     name: str | None = None
     source: str | None = None
+    # Rempli par `validate()` : anomalies non bloquantes, à afficher (⚠) sans refuser le deck.
+    warnings: list[str] = field(default_factory=list, compare=False)
 
     @property
     def total(self) -> int:
         return sum(self.cards.values())
 
     def validate(self) -> None:
+        """Contrôles structurels (bloquants) + relevé des quantités inhabituelles (⚠).
+
+        Le dépassement de 4 exemplaires n'est PAS bloquant : plusieurs cartes lèvent la
+        limite dans leur propre texte, et notre table des cartes n'est qu'un instantané —
+        une carte d'un set plus récent en serait absente. Une liste réellement jouée et
+        publiée est présumée légale ; c'est le total de 50 cartes qui détecte les imports
+        tronqués (une quantité fautive le casse aussi)."""
+        self.warnings = []
         if not _ID_RE.match(self.leader):
             raise ImportError_(f"Leader invalide : {self.leader!r}")
         if self.total != DECK_SIZE:
@@ -69,11 +81,10 @@ class Decklist:
                 raise ImportError_(f"Id de carte invalide : {cid!r}")
             if qty < 1:
                 raise ImportError_(f"{cid} : {qty} exemplaires")
-            # Quelques cartes (Pacifista, Biscuit Warrior, Prisoner of Impel Down) portent
-            # « you may have any number of this card in your deck » : la limite ne s'y
-            # applique pas, et les decklists de tournoi en jouent couramment 8 ou 9.
             if qty > MAX_COPIES and not is_unlimited(cid):
-                raise ImportError_(f"{cid} : {qty} exemplaires (max {MAX_COPIES})")
+                self.warnings.append(
+                    f"{cid} : {qty} exemplaires (usuellement max {MAX_COPIES}, et cette carte "
+                    "n'est pas connue comme illimitée) — accepté, à vérifier")
 
     def to_native_text(self) -> str:
         """Format natif du sim : leader en 1re ligne, puis cartes triées par id."""

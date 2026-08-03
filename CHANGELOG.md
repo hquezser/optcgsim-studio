@@ -35,6 +35,14 @@ fait pour ingérer des fichiers venant d'inconnus, et les traitait avec trop de 
 
 ### Corrigé
 
+- **Des decklists de tournoi légales étaient refusées à l'import.** La limite de 4 exemplaires
+  était appliquée à toutes les cartes, alors que certaines la lèvent dans leur propre texte
+  (« you may have any number of this card in your deck » : Pacifista, Biscuit Warrior, Prisoner
+  of Impel Down). Tout un archétype de `deckpack` publié devenait inimportable. La limite n'est
+  plus bloquante : une liste réellement jouée est présumée légale, et notre table des cartes
+  n'est qu'un instantané — une carte d'un set plus récent en serait absente. Un dépassement sur
+  une carte non connue comme illimitée est relevé en ⚠ non bloquant. C'est le total de 50
+  cartes qui reste le garde-fou contre les imports tronqués.
 - **La restauration s'arrêtait au premier échec.** `restore-all` abandonnait dès qu'une
   sauvegarde manquait, laissant le jeu à moitié restauré sans le dire. Elle poursuit
   maintenant, renvoie `{restored, failed}`, et la CLI sort en code 1 en listant les échecs.

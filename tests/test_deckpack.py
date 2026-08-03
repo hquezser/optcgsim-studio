@@ -100,6 +100,28 @@ def test_current_schema_version_no_warning(tmp_path):
     assert rep.warnings == []
 
 
+def test_unusual_quantity_warns_but_imports(tmp_path):
+    # > 4 exemplaires d'une carte non connue comme illimitée : importé (une liste publiée est
+    # présumée légale), mais relevé — l'avertissement du deck remonte au rapport.
+    odd = VALID.replace("4xST30-004\n4xOP10-005\n3xOP15-012\n", "8xST30-004\n3xOP15-012\n")
+    manifest = {"name": "P", "decks": [{"name": "S", "text": odd}]}
+    rep = deckpack.resolve(manifest, tmp_path)
+    assert len(rep.imported) == 1 and rep.failed == []
+    assert rep.imported[0].deck.total == 50
+    assert any(w.startswith("S : ") and "ST30-004" in w for w in rep.warnings)
+
+
+def test_tournament_deck_with_unlimited_card_imports_silently(tmp_path):
+    # Cas réel : 9x OP16-042 (carte qui lève elle-même la limite) — ni échec, ni ⚠.
+    real = ("1xOP16-022\n4xOP16-034\n4xOP16-054\n4xOP16-055\n3xST30-014\n2xST12-010\n"
+            "4xOP16-045\n4xOP16-056\n2xOP16-026\n4xOP16-048\n9xOP16-042\n1xOP15-032\n"
+            "2xOP16-032\n1xOP02-068\n2xOP16-038\n1xEB01-028\n1xOP12-037\n1xOP11-061\n"
+            "1xOP06-058\n")
+    rep = deckpack.resolve({"name": "P", "decks": [{"name": "Luffy", "text": real}]}, tmp_path)
+    assert len(rep.imported) == 1 and rep.failed == [] and rep.warnings == []
+    assert rep.imported[0].deck.total == 50
+
+
 def test_resolve_sets_source_to_pack_name_not_internal_file_or_url(tmp_path):
     (tmp_path / "decks").mkdir()
     (tmp_path / "decks" / "z.txt").write_text(VALID)

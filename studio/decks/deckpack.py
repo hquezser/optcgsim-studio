@@ -127,6 +127,9 @@ def resolve(manifest: dict, pack_dir: Path,
                 uniq, n = f"{name} ({n})", n + 1
             seen_names.add(uniq)
             rep.imported.append(ResolvedDeck(name=uniq, tags=list(tags), deck=deck))
+            # Anomalies non bloquantes relevées par `Decklist.validate()` (quantités
+            # inhabituelles) : remontées au rapport pour rester visibles (⚠) à l'écran.
+            rep.warnings += [f"{uniq} : {w}" for w in deck.warnings]
         except (importer.ImportError_, DeckPackError, OSError) as e:
             rep.failed.append({"name": name, "reason": str(e)})
     return rep
