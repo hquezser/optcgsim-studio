@@ -36,3 +36,21 @@ def test_ids_of_type_case_insensitive_and_disjoint():
     assert len(ev) > 100 and len(ld) > 50
     assert ev.isdisjoint(ld)                 # un id a un seul type
     assert "OP14-018" in ev and "OP01-001" in ld
+
+
+# ------------------------------------------- cartes sans limite de copies
+def test_unlimited_cards_recognized():
+    # les seules cartes portant « any number of this card in your deck »
+    assert cardmeta.is_unlimited("OP16-042")   # Prisoner of Impel Down
+    assert cardmeta.is_unlimited("OP01-075")   # Pacifista
+    assert cardmeta.is_unlimited("OP08-072")   # Biscuit Warrior
+
+
+def test_ordinary_cards_are_limited():
+    assert not cardmeta.is_unlimited("OP01-016")   # Nami
+    assert not cardmeta.is_unlimited("ZZ99-999")   # inconnue → défaut prudent
+
+
+def test_unlimited_table_stays_small():
+    # garde-fou : une table qui enflerait signalerait une extraction trop large
+    assert 0 < len(cardmeta.unlimited_ids()) <= 10

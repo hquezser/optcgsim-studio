@@ -1,7 +1,8 @@
 """Métadonnées de cartes minimales pour l'import sélectif par type (P7/P8).
 
 Porte la correspondance card_id -> type (Leader / Character / Event / Stage), nécessaire aux
-filtres « leaders uniquement », « événements uniquement », etc. La table
+filtres « leaders uniquement », « événements uniquement », etc., ainsi que la liste des cartes
+sans limite de copies (voir `is_unlimited`). La table
 (studio/assets/data/card_types.json) est extraite du projet frère optcgsim-haki
 (card_stats.json) par scripts/refresh_cardmeta.py ; on ne vendorise que id->type (~43 Ko).
 """
@@ -49,3 +50,23 @@ def leader_ids() -> frozenset[str]:
 def is_leader(card_id: str) -> bool:
     """Vrai si `card_id` est une carte Leader. Défaut prudent : False si inconnu."""
     return card_type(card_id) == "Leader"
+
+
+# --------------------------------------------------- cartes sans limite de copies
+@lru_cache(maxsize=1)
+def unlimited_ids() -> frozenset[str]:
+    """Ids des cartes portant « you may have any number of this card in your deck ».
+
+    Poignée de cartes (Pacifista, Biscuit Warrior, Prisoner of Impel Down…) explicitement
+    exemptées de la limite des 4 exemplaires par leur propre texte. Vide si la table est
+    absente/corrompue (défaut prudent : on retombe sur la limite stricte)."""
+    try:
+        raw = json.loads(_DATA.read_text()).get("unlimited", [])
+        return frozenset(cid for cid in raw if isinstance(cid, str))
+    except (OSError, ValueError):
+        return frozenset()
+
+
+def is_unlimited(card_id: str) -> bool:
+    """Vrai si `card_id` peut figurer en plus de 4 exemplaires. Défaut prudent : False."""
+    return card_id in unlimited_ids()

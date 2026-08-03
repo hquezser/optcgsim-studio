@@ -12,7 +12,8 @@ Le format pivot est le format NATIF du sim (observé dans ses .txt réels) :
     4xOP09-002
     ...
 
-Règles OPTCG validées à l'import : exactement 1 leader + 50 cartes, ≤ 4 exemplaires par id.
+Règles OPTCG validées à l'import : exactement 1 leader + 50 cartes, ≤ 4 exemplaires par id —
+sauf pour la poignée de cartes dont le texte lève lui-même la limite (`cardmeta.is_unlimited`).
 
 Note de robustesse : les sites majeurs (NakamaDecks, EgmanEvents, LimitlessTCG) offrent tous
 un bouton « Export OPTCGSim » qui produit exactement le format natif — le duo export-bouton →
@@ -31,6 +32,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..assets.cardmeta import is_unlimited
 from ..nettls import CERT_FIX_HINT, is_cert_error, ssl_context
 
 # Même gabarit d'id que le reste de l'écosystème (validé sur des années de logs).
@@ -65,7 +67,12 @@ class Decklist:
         for cid, qty in self.cards.items():
             if not _ID_RE.match(cid):
                 raise ImportError_(f"Id de carte invalide : {cid!r}")
-            if not 1 <= qty <= MAX_COPIES:
+            if qty < 1:
+                raise ImportError_(f"{cid} : {qty} exemplaires")
+            # Quelques cartes (Pacifista, Biscuit Warrior, Prisoner of Impel Down) portent
+            # « you may have any number of this card in your deck » : la limite ne s'y
+            # applique pas, et les decklists de tournoi en jouent couramment 8 ou 9.
+            if qty > MAX_COPIES and not is_unlimited(cid):
                 raise ImportError_(f"{cid} : {qty} exemplaires (max {MAX_COPIES})")
 
     def to_native_text(self) -> str:

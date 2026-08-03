@@ -72,6 +72,21 @@ def test_more_than_four_copies_rejected():
         parse_text(text)
 
 
+def test_unlimited_card_beyond_four_accepted():
+    # OP16-042 « Prisoner of Impel Down » : « you may have any number of this card in your
+    # deck ». Deck réel (Green/Blue Luffy, Treasure Cup Utrecht 2026) : 9 exemplaires.
+    text = ("1xOP16-022\n9xOP16-042\n" + "\n".join(f"4xBB{i:02d}-001" for i in range(10)) + "\n1xCC01-001")
+    deck = parse_text(text)
+    assert deck.cards["OP16-042"] == 9
+    assert deck.total == 50
+
+
+def test_zero_copies_rejected():
+    deck = Decklist(leader="OP01-060", cards={"AA01-001": 0, "BB01-001": 50})
+    with pytest.raises(ImportError_, match="0 exemplaires"):
+        deck.validate()
+
+
 def test_no_leader_determinable():
     with pytest.raises(ImportError_, match="Leader indéterminable"):
         parse_text("\n".join(f"4xAA{i:02d}-001" for i in range(12)) + "\n2xB01-001")
