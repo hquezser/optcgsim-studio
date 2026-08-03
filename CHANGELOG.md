@@ -72,6 +72,16 @@ fait pour ingérer des fichiers venant d'inconnus, et les traitait avec trop de 
   laissait derrière elle une copie complète de tout ce qui avait été téléchargé.
 - **Presse-papiers bloqué** : le délai d'attente était posé mais son expiration jamais
   traitée, d'où une trace brute.
+- **Un fichier en échec faisait perdre tout le fetch sélectif** (import GitHub filtré,
+  `repos build --path-prefix`). Concerne les dépôts de cartes/traductions alternatives,
+  jamais les thèmes (qui passent par un téléchargement complet). Un fichier temporairement
+  indisponible sur un dépôt de milliers d'images est bénin — la carte garde son art
+  d'origine — mais faisait auparavant échouer tout l'import. Les échecs sont désormais
+  sautés et listés dans le rapport du pack ; `_repair_corrupted` garde volontairement son
+  exigence stricte (une réparation à moitié n'est pas une réparation).
+- **La logique de persistance d'un deck était écrite à trois endroits légèrement
+  différents** (service API, import unitaire CLI, import de pack CLI) — dérive déjà
+  commencée. Unifiée dans `studio/decks/persist.py`, importé par les deux surfaces.
 
 ### Performance
 
@@ -106,13 +116,9 @@ fait pour ingérer des fichiers venant d'inconnus, et les traitait avec trop de 
 
 ### Connu, non corrigé
 
-- `fetch_selected` abandonne tout le téléchargement si un seul fichier échoue. Le rendre
-  tolérant change le contrat de retour (que vaut un pack partiel ?) : décision d'API reportée.
 - La résolution de conflits de synchronisation peut, dans un cas précis, marquer « propre » une
   modification locale écrasée. Nécessite une décision de conception sur la sémantique voulue.
 - Le support Windows n'est pas vérifié sur machine réelle (`gamepaths.py` le marque
   `verified=False`).
-- La logique de persistance d'un deck est écrite à trois endroits légèrement différents ;
-  la factoriser demande de trancher quel comportement fait référence.
 - Le classement de la catégorie `OPBounty` est peut-être erroné, mais se tromper casserait
   l'application de packs : à trancher avec la connaissance du jeu.
