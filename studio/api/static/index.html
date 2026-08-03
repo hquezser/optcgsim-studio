@@ -160,6 +160,21 @@
       <button id="collection-default-btn" class="mini ghost" style="display:none"
               onclick="setDefaultCollection()">Définir par défaut</button>
     </div>
+    <div class="row" style="flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted)">
+      <span>Import sélectif (rien de coché = tout) :</span>
+      <label style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" class="col-f-type" value="leader" style="width:auto"> leaders</label>
+      <label style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" class="col-f-type" value="character" style="width:auto"> personnages</label>
+      <label style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" class="col-f-type" value="event" style="width:auto"> événements</label>
+      <label style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" class="col-f-type" value="stage" style="width:auto"> stages</label>
+      <label style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" class="col-f-cat" value="don" style="width:auto"> don</label>
+      <label style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" class="col-f-cat" value="playmats" style="width:auto"> tapis</label>
+    </div>
     <div id="collection-result"></div>
   </section>
 
@@ -465,6 +480,14 @@ function currentFilter(){
   if(cats.length) body.only_categories = (types.length ? ['cards', ...cats] : cats);
   return body;
 }
+function collectionFilter(){
+  const types = [...document.querySelectorAll('.col-f-type:checked')].map(c=>c.value);
+  const cats = [...document.querySelectorAll('.col-f-cat:checked')].map(c=>c.value);
+  const body = {};
+  if(types.length) body.only_types = types;
+  if(cats.length) body.only_categories = (types.length ? ['cards', ...cats] : cats);
+  return body;
+}
 const fmtMo = b => (b/1048576).toFixed(b>10485760?0:1)+' Mo';
 
 // taille estimée selon le filtre courant, à partir des tailles par catégorie/type de l'aperçu
@@ -525,8 +548,26 @@ async function analyseCollection(){
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({source})});
     renderCollection(_collection);
     $('#collection-default-btn').style.display = '';
+    previewCollectionPacks();
   }catch(e){ toast(e.message, 1); $('#collection-result').innerHTML=''; }
   finally{ btn.disabled = false; }
+}
+
+async function previewCollectionPacks(){
+  if(!_collection) return;
+  const urls = _collection.packs.map(p => p.url);
+  const previews = await Promise.all(
+    urls.map(url => api('/packs/preview', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source: url})}).catch(() => null))
+  );
+  _collection.previewData = {};
+  urls.forEach((url, i) => {
+    if(previews[i] && previews[i].explorable){
+      _collection.previewData[url] = previews[i];
+    }
+  });
+  renderCollection(_collection);
 }
 
 function renderCollection(col){
@@ -542,19 +583,32 @@ function renderCollection(col){
     html += col.warnings.map(w => `<div class="hint">⚠ ${esc(w)}</div>`).join('');
   for(const [group, packs] of Object.entries(groups)){
     html += `<div class="meta" style="margin:10px 0 4px"><b>${esc(group)}</b> — un seul choix</div>`;
-    html += packs.map((p, i) => `
+    html += `
+      <label style="display:flex;align-items:center;gap:6px;margin:3px 0">
+        <input type="radio" name="col-group-${esc(group)}" value=""
+               checked style="width:auto"> Aucun
+      </label>`;
+    html += packs.map((p, i) => {
+      const preview = col.previewData?.[p.url];
+      const sizeInfo = preview ? ` (${fmtMo(preview.sizes.total)})` : '';
+      return `
       <label style="display:flex;align-items:center;gap:6px;margin:3px 0">
         <input type="radio" name="col-group-${esc(group)}" value="${esc(p.url)}"
-               ${i === 0 ? 'checked' : ''} style="width:auto"> ${esc(p.label)}
-      </label>`).join('');
+               style="width:auto"> ${esc(p.label)}${sizeInfo}
+      </label>`;
+    }).join('');
   }
   if(standalone.length){
     html += `<div class="meta" style="margin:10px 0 4px"><b>Compléments</b></div>`;
-    html += standalone.map(p => `
+    html += standalone.map(p => {
+      const preview = col.previewData?.[p.url];
+      const sizeInfo = preview ? ` (${fmtMo(preview.sizes.total)})` : '';
+      return `
       <label style="display:flex;align-items:center;gap:6px;margin:3px 0">
         <input type="checkbox" class="col-standalone" value="${esc(p.url)}" checked
-               style="width:auto"> ${esc(p.label)}
-      </label>`).join('');
+               style="width:auto"> ${esc(p.label)}${sizeInfo}
+      </label>`;
+    }).join('');
   }
   html += `<div class="actions" style="margin-top:12px">
       <button onclick="importCollection()">Importer la sélection</button>
@@ -570,7 +624,7 @@ async function importCollection(){
   const selected = [
     ...el.querySelectorAll('input[type=radio]:checked'),
     ...el.querySelectorAll('input.col-standalone:checked'),
-  ].map(i => i.value);
+  ].map(i => i.value).filter(v => v);
   if(!selected.length) return toast('Rien de sélectionné', 1);
   const byUrl = {}; for(const p of _collection.packs) byUrl[p.url] = p;
   const progress = $('#collection-progress');
@@ -580,7 +634,7 @@ async function importCollection(){
     progress.textContent = `pack ${i + 1}/${selected.length} : ${p.label}…`;
     try{
       const r = await api('/packs/add', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({source: p.url, name: p.label})});
+        body: JSON.stringify({source: p.url, name: p.label, ...collectionFilter()})});
       await pollJob(r.job_id, `Import « ${p.label} »`);
       ok++;
     }catch(e){ toast(`« ${p.label} » : ${e.message}`, 1); }
