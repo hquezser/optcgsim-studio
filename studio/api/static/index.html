@@ -15,7 +15,8 @@
     font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
   a{color:var(--accent2)}
   header{padding:20px 26px;border-bottom:1px solid var(--line);
-    display:flex;align-items:center;gap:16px;position:sticky;top:0;background:var(--bg);z-index:5}
+    display:flex;align-items:center;flex-wrap:wrap;row-gap:12px;gap:16px;
+    position:sticky;top:0;background:var(--bg);z-index:5}
   header h1{font-size:18px;margin:0;letter-spacing:.3px}
   header h1 b{color:var(--accent)}
   .status{margin-left:auto;display:flex;gap:18px;font-size:12px;color:var(--muted)}
@@ -40,6 +41,15 @@
   button{background:var(--accent);border:none;cursor:pointer;font-weight:600;padding:9px 15px}
   button:hover{filter:brightness(1.08)} button.ghost{background:var(--panel2);border:1px solid var(--line);font-weight:500}
   button.mini{padding:5px 10px;font-size:12px}
+  .tabs{flex-basis:100%;display:flex;gap:8px;overflow-x:auto;scrollbar-width:none}
+  .tabs button{background:transparent;border:1px solid transparent;border-radius:10px;
+    color:var(--muted);font-weight:600;padding:7px 14px;white-space:nowrap}
+  .tabs button:hover{color:var(--txt);background:var(--panel)}
+  .tabs button.active{background:var(--panel);border-color:var(--line);color:var(--txt);
+    box-shadow:inset 0 -2px 0 var(--accent)}
+  .tabs button:focus-visible{outline:2px solid var(--accent2);outline-offset:2px}
+  .tab-panel{display:grid;gap:26px}
+  .tab-panel[hidden]{display:none}
   .pack{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
     margin-bottom:12px}
   .pack .top{display:flex;align-items:center;gap:10px}
@@ -81,12 +91,18 @@
 <header>
   <h1><b>◈</b> OPTCGSim <b>Studio</b></h1>
   <div class="status" id="status"><span>chargement…</span></div>
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button id="tabbtn-themes"   class="tab-btn active" data-tab="themes"   role="tab" aria-controls="panel-themes"   aria-selected="true">Thèmes</button>
+    <button id="tabbtn-cards"    class="tab-btn"        data-tab="cards"    role="tab" aria-controls="panel-cards"    aria-selected="false" tabindex="-1">Cards</button>
+    <button id="tabbtn-decks"    class="tab-btn"        data-tab="decks"    role="tab" aria-controls="panel-decks"    aria-selected="false" tabindex="-1">Decks</button>
+    <button id="tabbtn-reglages" class="tab-btn"        data-tab="reglages" role="tab" aria-controls="panel-reglages" aria-selected="false" tabindex="-1">Réglages</button>
+  </nav>
 </header>
 
 <main>
   <div id="activity"><h2>⏳ En cours</h2><div id="activity-jobs"></div></div>
 
-  <div class="grid">
+  <div class="tab-panel" data-tab="themes" id="panel-themes" role="tabpanel" aria-labelledby="tabbtn-themes">
     <section>
       <h2>Ajouter un thème / pack</h2>
       <p class="sub">Site Themer, alt-arts, patch FR… — dépose un <b>.zip</b>, ou colle une URL
@@ -124,108 +140,132 @@
       <div class="hint" id="preview-hint"></div>
       <div class="hint">« Analyser » normalise et rapporte — <b>rien n'est appliqué</b> au jeu
         tant que tu ne cliques pas « Appliquer ». L'import sélectif sur une source <b>GitHub</b>
-        ne télécharge que le nécessaire (dépôt privé : configure un token plus bas).</div>
+        ne télécharge que le nécessaire (dépôt privé : configure un token dans l'onglet
+        <button class="mini ghost" data-goto-tab="reglages" style="padding:2px 8px;font-size:11px">Réglages</button>).</div>
     </section>
 
     <section>
-      <h2>Importer une decklist</h2>
-      <p class="sub">Colle un export (tout format) ou une URL. Écrit le deck dans le sim et en base.</p>
-      <textarea id="deck-text" placeholder="1xOP01-060&#10;4x OP01-016&#10;…  (ou une URL sur la 1re ligne)"></textarea>
-      <div class="row">
-        <input id="deck-name" placeholder="nom du deck (optionnel)" style="flex:1">
-        <input id="deck-tags" placeholder="tags: ranked,op17" style="flex:1">
-        <button onclick="importDeck()">Importer</button>
+      <h2>Bibliothèque de thèmes</h2>
+      <p class="sub">Applique un thème (playmat, cardback…) — réversible à tout instant, ou vois
+        combien de cartes de <b>tes decks</b> il habille.</p>
+      <div id="packs-themes-bulk" class="row" style="display:none;align-items:center;gap:10px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+          <input type="checkbox" id="packs-themes-select-all" onchange="toggleAllPacks('themes', this.checked)"
+                 style="width:auto"> tout sélectionner</label>
+        <button class="mini ghost" onclick="removeSelectedPacks('themes')">Retirer la sélection</button>
       </div>
-      <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
-        <p class="sub" style="margin:0 0 8px">Ou un <b>pack de decks</b> entier (« Meta OP16 »,
-          « Rogue decks de Trecore »…) — dossier/zip/URL contenant un <code>deckpack.json</code>.</p>
-        <div class="row">
-          <input id="deckpack-src" placeholder="URL ou /chemin vers le deckpack" style="flex:1">
-          <button class="ghost" onclick="importDeckPack()">Importer le pack</button>
-        </div>
-      </div>
+      <div id="packs-themes"><div class="empty">Chargement…</div></div>
     </section>
   </div>
 
-  <section>
-    <h2>Importer une collection</h2>
-    <p class="sub">Un <code>collection.json</code> regroupe plusieurs dépôts liés (générés
-      côté mainteneur via <code>studio repos build --collection-label/--collection-group</code>)
-      pour un seul « look » cohérent — colle l'URL du manifeste (ou son chemin local), puis
-      choisis les variantes (un seul choix par groupe) et les compléments (tous cochés par
-      défaut) avant d'importer.</p>
-    <div class="row">
-      <input id="collection-src" placeholder="URL du collection.json, ou /chemin local" style="flex:1">
-      <button id="collection-analyse-btn" onclick="analyseCollection()">Analyser</button>
-      <button id="collection-default-btn" class="mini ghost" style="display:none"
-              onclick="setDefaultCollection()">Définir par défaut</button>
-    </div>
-    <div class="row" style="flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted)">
-      <span>Import sélectif (rien de coché = tout) :</span>
-      <label style="display:flex;align-items:center;gap:5px">
-        <input type="checkbox" class="col-f-type" value="leader" style="width:auto"> leaders</label>
-      <label style="display:flex;align-items:center;gap:5px">
-        <input type="checkbox" class="col-f-type" value="character" style="width:auto"> personnages</label>
-      <label style="display:flex;align-items:center;gap:5px">
-        <input type="checkbox" class="col-f-type" value="event" style="width:auto"> événements</label>
-      <label style="display:flex;align-items:center;gap:5px">
-        <input type="checkbox" class="col-f-type" value="stage" style="width:auto"> stages</label>
-      <label style="display:flex;align-items:center;gap:5px">
-        <input type="checkbox" class="col-f-cat" value="don" style="width:auto"> don</label>
-      <label style="display:flex;align-items:center;gap:5px">
-        <input type="checkbox" class="col-f-cat" value="playmats" style="width:auto"> tapis</label>
-    </div>
-    <div id="collection-result"></div>
-  </section>
+  <div class="tab-panel" data-tab="cards" id="panel-cards" role="tabpanel" aria-labelledby="tabbtn-cards" hidden>
+    <section>
+      <h2>Bibliothèque de cartes</h2>
+      <p class="sub">Traductions, alt-arts… — réversible à tout instant. Les packs s'ajoutent
+        depuis le même formulaire que les thèmes :
+        <button class="mini ghost" data-goto-tab="themes">Ajouter un pack…</button></p>
+      <div id="packs-cards-bulk" class="row" style="display:none;align-items:center;gap:10px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+          <input type="checkbox" id="packs-cards-select-all" onchange="toggleAllPacks('cards', this.checked)"
+                 style="width:auto"> tout sélectionner</label>
+        <button class="mini ghost" onclick="removeSelectedPacks('cards')">Retirer la sélection</button>
+      </div>
+      <div id="packs-cards"><div class="empty">Chargement…</div></div>
+    </section>
+  </div>
 
-  <section>
-    <h2>Bibliothèque de packs</h2>
-    <p class="sub">Applique un pack (réversible à tout instant), ou vois combien de cartes de
-      <b>tes decks</b> il habille.</p>
-    <div id="packs-bulk" class="row" style="display:none;align-items:center;gap:10px">
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
-        <input type="checkbox" id="packs-select-all" onchange="toggleAllPacks(this.checked)"
-               style="width:auto"> tout sélectionner</label>
-      <button class="mini ghost" onclick="removeSelectedPacks()">Retirer la sélection</button>
-    </div>
-    <div id="packs"><div class="empty">Chargement…</div></div>
-  </section>
+  <div class="tab-panel" data-tab="decks" id="panel-decks" role="tabpanel" aria-labelledby="tabbtn-decks" hidden>
+    <div class="grid">
+      <section>
+        <h2>Importer une decklist</h2>
+        <p class="sub">Colle un export (tout format) ou une URL. Écrit le deck dans le sim et en base.</p>
+        <textarea id="deck-text" placeholder="1xOP01-060&#10;4x OP01-016&#10;…  (ou une URL sur la 1re ligne)"></textarea>
+        <div class="row">
+          <input id="deck-name" placeholder="nom du deck (optionnel)" style="flex:1">
+          <input id="deck-tags" placeholder="tags: ranked,op17" style="flex:1">
+          <button onclick="importDeck()">Importer</button>
+        </div>
+        <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+          <p class="sub" style="margin:0 0 8px">Ou un <b>pack de decks</b> entier (« Meta OP16 »,
+            « Rogue decks de Trecore »…) — dossier/zip/URL contenant un <code>deckpack.json</code>.</p>
+          <div class="row">
+            <input id="deckpack-src" placeholder="URL ou /chemin vers le deckpack" style="flex:1">
+            <button class="ghost" onclick="importDeckPack()">Importer le pack</button>
+          </div>
+        </div>
+      </section>
 
-  <section>
-    <h2>Mes decks</h2>
-    <div class="row" style="margin-bottom:10px">
-      <button class="ghost" onclick="syncFromSim()">Synchroniser depuis le jeu</button>
+      <section>
+        <h2>Importer une collection</h2>
+        <p class="sub">Un <code>collection.json</code> regroupe plusieurs dépôts liés (générés
+          côté mainteneur via <code>studio repos build --collection-label/--collection-group</code>)
+          pour un seul « look » cohérent — colle l'URL du manifeste (ou son chemin local), puis
+          choisis les variantes (un seul choix par groupe) et les compléments (tous cochés par
+          défaut) avant d'importer.</p>
+        <div class="row">
+          <input id="collection-src" placeholder="URL du collection.json, ou /chemin local" style="flex:1">
+          <button id="collection-analyse-btn" onclick="analyseCollection()">Analyser</button>
+          <button id="collection-default-btn" class="mini ghost" style="display:none"
+                  onclick="setDefaultCollection()">Définir par défaut</button>
+        </div>
+        <div class="row" style="flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted)">
+          <span>Import sélectif (rien de coché = tout) :</span>
+          <label style="display:flex;align-items:center;gap:5px">
+            <input type="checkbox" class="col-f-type" value="leader" style="width:auto"> leaders</label>
+          <label style="display:flex;align-items:center;gap:5px">
+            <input type="checkbox" class="col-f-type" value="character" style="width:auto"> personnages</label>
+          <label style="display:flex;align-items:center;gap:5px">
+            <input type="checkbox" class="col-f-type" value="event" style="width:auto"> événements</label>
+          <label style="display:flex;align-items:center;gap:5px">
+            <input type="checkbox" class="col-f-type" value="stage" style="width:auto"> stages</label>
+          <label style="display:flex;align-items:center;gap:5px">
+            <input type="checkbox" class="col-f-cat" value="don" style="width:auto"> don</label>
+          <label style="display:flex;align-items:center;gap:5px">
+            <input type="checkbox" class="col-f-cat" value="playmats" style="width:auto"> tapis</label>
+        </div>
+        <div id="collection-result"></div>
+      </section>
     </div>
-    <div id="decks-bulk" class="row" style="display:none;align-items:center;gap:10px">
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
-        <input type="checkbox" id="decks-select-all" onchange="toggleAllDecks(this.checked)"
-               style="width:auto"> tout sélectionner</label>
-      <button class="mini ghost" onclick="removeSelectedDecks()">Retirer la sélection</button>
-      <button class="mini ghost" onclick="exportDeckPack()">Générer un deckpack…</button>
-    </div>
-    <div id="decks"><div class="empty">Aucun deck importé.</div></div>
-  </section>
 
-  <section>
-    <h2>Réglages</h2>
-    <p class="sub">Pour explorer/importer sélectivement un dépôt GitHub <b>privé</b> (ton pack
-      perso), colle un Personal Access Token (scope <code>repo</code>). Stocké localement,
-      jamais affiché ni envoyé ailleurs. Inutile pour un dépôt public.</p>
-    <div class="row">
-      <input id="gh-token" type="password" placeholder="ghp_… (laisser vide pour effacer)" style="flex:1">
-      <button class="ghost" onclick="saveToken()">Enregistrer</button>
-    </div>
-    <div class="hint" id="token-state"></div>
+    <section>
+      <h2>Mes decks</h2>
+      <div class="row" style="margin-bottom:10px">
+        <button class="ghost" onclick="syncFromSim()">Synchroniser depuis le jeu</button>
+      </div>
+      <div id="decks-bulk" class="row" style="display:none;align-items:center;gap:10px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+          <input type="checkbox" id="decks-select-all" onchange="toggleAllDecks(this.checked)"
+                 style="width:auto"> tout sélectionner</label>
+        <button class="mini ghost" onclick="removeSelectedDecks()">Retirer la sélection</button>
+        <button class="mini ghost" onclick="exportDeckPack()">Générer un deckpack…</button>
+      </div>
+      <div id="decks"><div class="empty">Aucun deck importé.</div></div>
+    </section>
+  </div>
 
-    <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
-      <p class="sub" style="margin:0 0 8px">Collection par défaut — auto-analysée à
-        l'ouverture de cette page (section « Importer une collection » ci-dessus), pour
-        proposer tes propres packs GitHub sans recoller la source à chaque fois.</p>
-      <div class="hint" id="default-collection-state"></div>
-      <button class="mini ghost" id="default-collection-forget-btn" style="display:none;margin-top:6px"
-              onclick="forgetDefaultCollection()">Oublier</button>
-    </div>
-  </section>
+  <div class="tab-panel" data-tab="reglages" id="panel-reglages" role="tabpanel" aria-labelledby="tabbtn-reglages" hidden>
+    <section>
+      <h2>Réglages</h2>
+      <p class="sub">Pour explorer/importer sélectivement un dépôt GitHub <b>privé</b> (ton pack
+        perso), colle un Personal Access Token (scope <code>repo</code>). Stocké localement,
+        jamais affiché ni envoyé ailleurs. Inutile pour un dépôt public.</p>
+      <div class="row">
+        <input id="gh-token" type="password" placeholder="ghp_… (laisser vide pour effacer)" style="flex:1">
+        <button class="ghost" onclick="saveToken()">Enregistrer</button>
+      </div>
+      <div class="hint" id="token-state"></div>
+
+      <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+        <p class="sub" style="margin:0 0 8px">Collection par défaut — auto-analysée à
+          l'ouverture de cette page (section « Importer une collection » de l'onglet
+          <button class="mini ghost" data-goto-tab="decks" style="padding:2px 8px;font-size:11px">Decks</button>),
+          pour proposer tes propres packs GitHub sans recoller la source à chaque fois.</p>
+        <div class="hint" id="default-collection-state"></div>
+        <button class="mini ghost" id="default-collection-forget-btn" style="display:none;margin-top:6px"
+                onclick="forgetDefaultCollection()">Oublier</button>
+      </div>
+    </section>
+  </div>
 </main>
 
 <div class="toast" id="toast"></div>
@@ -253,6 +293,41 @@ function toast(msg, err){
   setTimeout(()=>t.className='toast',3200);
 }
 
+// ------------------------------------------------------------------ onglets
+// L'onglet actif vit dans le FRAGMENT d'URL : recharger ou partager le lien retombe au même
+// endroit, et Précédent/Suivant du navigateur naviguent entre onglets sans code d'historique.
+// Le fragment est préfixé « #/ » exprès : « #decks » viserait le <div id="decks"> et ferait
+// sauter le scroll ; « #/decks » ne correspond à aucun id, donc aucun saut.
+const TABS = ['themes', 'cards', 'decks', 'reglages'];
+
+function switchTab(name){
+  if(!TABS.includes(name)) name = TABS[0];
+  document.querySelectorAll('.tab-panel').forEach(p => p.hidden = p.dataset.tab !== name);
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    const on = b.dataset.tab === name;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+    b.tabIndex = on ? 0 : -1;
+  });
+}
+const tabFromHash = () => {
+  const n = location.hash.replace(/^#\/?/, '');
+  return TABS.includes(n) ? n : TABS[0];
+};
+function applyHash(){ switchTab(tabFromHash()); }
+
+// clic sur un onglet -> on n'écrit QUE le hash ; hashchange fait le rendu (source unique).
+document.querySelector('.tabs').addEventListener('click', e => {
+  const b = e.target.closest('.tab-btn');
+  if(b) location.hash = '#/' + b.dataset.tab;
+});
+// raccourci « va voir ailleurs » (ex. Cards -> formulaire d'ajout dans Thèmes)
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-goto-tab]');
+  if(b) location.hash = '#/' + b.dataset.gotoTab;
+});
+addEventListener('hashchange', applyHash);
+
 async function loadStatus(){
   const inv = await api('/inventory');
   $('#status').innerHTML =
@@ -261,16 +336,14 @@ async function loadStatus(){
     +`<span><b>${inv.active_swaps}</b> swaps actifs</span>`;
 }
 
-async function loadPacks(){
-  const packs = await api('/packs');
-  const el = $('#packs');
-  $('#packs-bulk').style.display = packs.length ? 'flex' : 'none';
-  if(!packs.length){
-    el.innerHTML='<div class="empty">Bibliothèque vide — ajoute un pack ci-dessus.</div>';
-    $('#packs-select-all').checked = false;
-    return;
-  }
-  el.innerHTML = packs.map(p=>`
+// `_pack_kind()` (server) renvoie 'mixed' dès qu'un pack couvre plusieurs catégories : avec
+// des listes d'inclusion, ces packs disparaîtraient des DEUX onglets. On raisonne donc par
+// exclusion — tout ce qui n'est pas explicitement « de l'autre côté » reste visible ici.
+const estTheme = p => !['cards', 'translation'].includes(p.kind);
+const estCarte = p => !['playmats', 'cardbacks', 'backgrounds'].includes(p.kind);
+
+function packCard(p){
+  return `
     <div class="pack" data-name="${esc(p.name)}">
       <div class="top">
         <input type="checkbox" class="pack-select" value="${esc(p.name)}" style="width:auto">
@@ -287,27 +360,50 @@ async function loadPacks(){
         <button class="mini ghost" data-act="remove">Restaurer / retirer</button>
       </div>
       <div class="cov"></div>
-    </div>`).join('');
+    </div>`;
+}
+
+function renderPacks(prefixe, packs, vide){
+  const el = $('#packs-' + prefixe);
+  $('#packs-' + prefixe + '-bulk').style.display = packs.length ? 'flex' : 'none';
+  if(!packs.length){
+    el.innerHTML = `<div class="empty">${vide}</div>`;
+    $('#packs-' + prefixe + '-select-all').checked = false;
+    return;
+  }
+  el.innerHTML = packs.map(packCard).join('');
+}
+
+async function loadPacks(){
+  const packs = await api('/packs');
+  renderPacks('themes', packs.filter(estTheme),
+    'Aucun thème — ajoute-en un ci-dessus.');
+  renderPacks('cards', packs.filter(estCarte),
+    'Aucun pack de cartes — ajoute-en un depuis l’onglet Thèmes.');
 }
 
 // Délégation : le nom du pack est lu dans `data-name` au CLIC, jamais injecté dans du code.
 // Supprime la classe entière du problème — un `onclick="apply('${nom}')"` reste vulnérable à
 // la moindre erreur d'échappement, alors qu'ici le nom ne traverse jamais un parseur JS.
-$('#packs').addEventListener('click', e => {
-  const btn = e.target.closest('button[data-act]');
-  if(!btn) return;
-  const name = btn.closest('.pack').dataset.name;
-  ({apply: () => apply(name, btn),
-    coverage: () => coverage(name, btn),
-    remove: () => remove(name)})[btn.dataset.act]?.();
-});
-
-function toggleAllPacks(checked){
-  document.querySelectorAll('.pack-select').forEach(c => c.checked = checked);
+for(const sel of ['#packs-themes', '#packs-cards']){
+  $(sel).addEventListener('click', e => {
+    const btn = e.target.closest('button[data-act]');
+    if(!btn) return;
+    const name = btn.closest('.pack').dataset.name;
+    ({apply: () => apply(name, btn),
+      coverage: () => coverage(name, btn),
+      remove: () => remove(name)})[btn.dataset.act]?.();
+  });
 }
 
-async function removeSelectedPacks(){
-  const names = [...document.querySelectorAll('.pack-select:checked')].map(c => c.value);
+function toggleAllPacks(prefixe, checked){
+  document.querySelectorAll('#packs-' + prefixe + ' .pack-select').forEach(c => c.checked = checked);
+}
+
+async function removeSelectedPacks(prefixe){
+  // Set : un pack 'mixed' est rendu dans LES DEUX listes, donc sélectionnable deux fois.
+  const names = [...new Set([...document.querySelectorAll(
+    '#packs-' + prefixe + ' .pack-select:checked')].map(c => c.value))];
   if(!names.length) return toast('Sélectionne au moins un pack', 1);
   if(!confirm(`Retirer ${names.length} pack(s) sélectionné(s) ? (restaure les fichiers `
              +'originaux — réversible en ré-ajoutant le pack depuis sa source)')) return;
@@ -808,18 +904,21 @@ document.querySelectorAll('.f-type, .f-cat').forEach(
  *  arrêté, base verrouillée, erreur 500), la promesse était rejetée en silence, la section
  *  restait bloquée sur son état vide, et l'utilisateur ne pouvait pas distinguer « aucun
  *  pack » de « le chargement a échoué ». Une erreur doit se voir. */
-function chargeOuAffiche(promesse, selecteur, quoi){
+function chargeOuAffiche(promesse, selecteurs, quoi){
   return promesse.catch(e => {
-    const el = $(selecteur);
-    if(el) el.innerHTML = `<div class="empty" style="color:var(--accent)">`
-      + `Impossible de charger ${quoi} : ${esc(e.message)}`
-      + `<br><button class="mini ghost" style="margin-top:8px" data-recharger>Réessayer</button></div>`;
-    el?.querySelector('[data-recharger]')?.addEventListener('click', () => location.reload());
+    for(const sel of [].concat(selecteurs)){
+      const el = $(sel);
+      if(el) el.innerHTML = `<div class="empty" style="color:var(--accent)">`
+        + `Impossible de charger ${quoi} : ${esc(e.message)}`
+        + `<br><button class="mini ghost" style="margin-top:8px" data-recharger>Réessayer</button></div>`;
+      el?.querySelector('[data-recharger]')?.addEventListener('click', () => location.reload());
+    }
   });
 }
 
+applyHash();
 loadStatus().catch(e=>$('#status').innerHTML=`<span style="color:var(--accent)">${esc(e.message)}</span>`);
-chargeOuAffiche(loadPacks(), '#packs', 'la bibliothèque de packs');
+chargeOuAffiche(loadPacks(), ['#packs-themes', '#packs-cards'], 'la bibliothèque de packs');
 chargeOuAffiche(loadDecks(), '#decks', 'tes decks');
 loadTokenState();              // déjà silencieux par conception (section secondaire)
 autoloadDefaultCollection();   // P12 : auto-analyse la collection par défaut si définie
