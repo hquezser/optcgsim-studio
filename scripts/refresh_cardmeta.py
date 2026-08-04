@@ -13,7 +13,8 @@ decklists de tournoi parfaitement légales.
 
 Usage :
     python3 scripts/refresh_cardmeta.py [chemin/vers/card_stats.json]
-Défaut : ../optcgsim-haki-public/optcgsim_haki/data/card_stats.json
+Défaut : cherché dans plusieurs emplacements (cf. DEFAULT_CANDIDATES) — optcgsim-haki-public
+vit HORS de l’écosystème optcgsim ; la dépendance est de maintenance seulement.
 """
 from __future__ import annotations
 
@@ -23,8 +24,19 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-DEFAULT_SRC = (Path(__file__).resolve().parent.parent.parent
-               / "optcgsim-haki-public" / "optcgsim_haki" / "data" / "card_stats.json")
+_REL_SRC = Path("optcgsim-haki-public") / "optcgsim_haki" / "data" / "card_stats.json"
+# `optcgsim-haki-public` ne fait PAS partie de l'écosystème optcgsim (studio, deckpacks,
+# deckpacks-data, deckpacks-library) : il vit à côté. La dépendance est de MAINTENANCE
+# seulement — card_types.json est vendorisé et commité, donc le studio tourne sans lui, et
+# seule la régénération de la table le réclame. D'où plusieurs emplacements plausibles
+# essayés dans l'ordre, plutôt qu'un chemin unique codé en dur qui casse au moindre
+# rangement de dossiers.
+_ECOSYSTEM = Path(__file__).resolve().parent.parent.parent
+DEFAULT_CANDIDATES = (
+    _ECOSYSTEM / _REL_SRC,                                       # voisin dans l'écosystème
+    _ECOSYSTEM.parent / "draft-optcgsim-projects" / _REL_SRC,     # projets de brouillon
+    _ECOSYSTEM.parent / _REL_SRC,                                # à côté de l'écosystème
+)
 OUT = Path(__file__).resolve().parent.parent / "studio" / "assets" / "data" / "card_types.json"
 _SHORT = {"Leader": "L", "Character": "C", "Event": "E", "Stage": "S"}
 # Clause officielle des cartes sans limite de copies, telle qu'imprimée sur la carte.
@@ -33,7 +45,15 @@ _UNLIMITED_RE = re.compile(r"any number of this card in your deck", re.I)
 
 def main(argv=None) -> int:
     argv = argv or sys.argv[1:]
-    src = Path(argv[0]) if argv else DEFAULT_SRC
+    src = Path(argv[0]) if argv else next(
+        (c for c in DEFAULT_CANDIDATES if c.exists()), None)
+    if src is None:
+        print("Source introuvable. Emplacements essayés :")
+        for c in DEFAULT_CANDIDATES:
+            print(f"  · {c}")
+        print("\nPassez le chemin en argument, ou récupérez card_stats.json depuis "
+              "optcgsim-haki-public (hors écosystème).")
+        return 1
     if not src.exists():
         print(f"Source introuvable : {src}")
         return 1
