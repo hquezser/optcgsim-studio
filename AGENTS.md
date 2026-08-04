@@ -2,15 +2,24 @@
 
 ## Écosystème OPTCGSim — tu es ici
 
-5 projets frères, finalités disjointes :
+4 projets frères dans `optcgsim-ecosystem/`, finalités disjointes. Voir le
+[README de l'écosystème](../README.md) pour la chaîne complète et la table des liens.
 
 | Repo | Rôle | Statut |
 |---|---|---|
-| `optcgsim-haki` | Brouillon/incubateur (pas de vocation à être publié) + son propre tracker de stats post-match. | local, aucun remote |
-| `optcgsim-haki-public` | Assistant de décision **en cours de match** (overlay, lethal/mulligan). Lecture de logs uniquement. | publié : github.com/hquezser/optcgsim-haki |
-| **`optcgsim-studio`** ← ici | Plateforme QoL : hot-swap cosmétique, import universel de decklists, sync multi-appareils. | local, prêt à publier |
-| `optcgsim-rogue-lab` | Analytique post-match causale, decks Rogue/non-méta. | local |
-| `optcgsim-deckpacks` | Format communautaire `deckpack.json`, consommé par ce studio. | local, pas encore poussé |
+| `optcgsim-deckpacks` | **Le format** : spec `deckpack.json`, schéma, validateur (l'arbitre). | local |
+| `optcgsim-deckpacks-data` | **Les données** : scrapers + un pack par tournoi. | local |
+| `optcgsim-deckpacks-library` | **La vitrine** : générateur de site statique, rampe d'accès vers le simulateur. | local |
+| **`optcgsim-studio`** ← ici | **Le consommateur** : `studio decks import-pack`, écrit les decks dans le jeu. | publié : github.com/hquezser/optcgsim-studio |
+
+Les liens inter-projets sont des chemins **relatifs entre voisins** : les quatre dépôts
+doivent rester frères dans ce dossier.
+
+Hors écosystème, rangés dans `../../draft-optcgsim-projects/` : `optcgsim-haki`,
+`optcgsim-haki-public`, `optcgsim-rogue-lab`. Seule dépendance résiduelle —
+`optcgsim-studio/scripts/refresh_cardmeta.py` lit `card_stats.json` depuis
+`optcgsim-haki-public`, mais uniquement pour régénérer une table vendorisée (maintenance,
+pas exécution).
 
 **Périmètre de CE repo** : modifie des fichiers du sim — **cosmétiques uniquement**
 (images/traductions/tapis), toujours réversible (`assets restore-all`), jamais le moteur de

@@ -22,15 +22,24 @@ un futur client Next.js/Tauri (mobile) — la logique reste côté Python (voir
 
 ## Écosystème OPTCGSim
 
-5 projets frères, finalités disjointes (chaque repo tient sa propre promesse) :
+4 projets frères dans `optcgsim-ecosystem/`, finalités disjointes. Voir le
+[README de l'écosystème](../README.md) pour la chaîne complète et la table des liens.
 
 | Repo | Rôle | Statut |
 |---|---|---|
-| `optcgsim-haki` | Brouillon/incubateur : point de départ de réflexion pour les 4 projets ci-dessous (`plans/`) + son propre tracker de stats post-match. **Pas de vocation à être publié.** | local, aucun remote |
-| `optcgsim-haki-public` | Assistant de décision **en cours de match** (overlay HUD, lethal/mulligan). Lecture de logs uniquement — **aucune modification du jeu**. | publié : github.com/hquezser/optcgsim-haki |
-| **`optcgsim-studio`** ← ici | Plateforme QoL : hot-swap cosmétique, import universel de decklists, sync multi-appareils. | local, prêt à publier |
-| `optcgsim-rogue-lab` | Analytique **post-match causale** (biais de survie neutralisé) pour decks Rogue/non-méta. | local |
-| `optcgsim-deckpacks` | Format communautaire `deckpack.json`, consommé par ce studio (`decks import-pack`). | local, pas encore poussé |
+| `optcgsim-deckpacks` | **Le format** : spec `deckpack.json`, schéma, validateur (l'arbitre). | local |
+| `optcgsim-deckpacks-data` | **Les données** : scrapers + un pack par tournoi. | local |
+| `optcgsim-deckpacks-library` | **La vitrine** : générateur de site statique, rampe d'accès vers le simulateur. | local |
+| **`optcgsim-studio`** ← ici | **Le consommateur** : `studio decks import-pack`, écrit les decks dans le jeu. | publié : github.com/hquezser/optcgsim-studio |
+
+Les liens inter-projets sont des chemins **relatifs entre voisins** : les quatre dépôts
+doivent rester frères dans ce dossier.
+
+Hors écosystème, rangés dans `../../draft-optcgsim-projects/` : `optcgsim-haki`,
+`optcgsim-haki-public`, `optcgsim-rogue-lab`. Seule dépendance résiduelle —
+`optcgsim-studio/scripts/refresh_cardmeta.py` lit `card_stats.json` depuis
+`optcgsim-haki-public`, mais uniquement pour régénérer une table vendorisée (maintenance,
+pas exécution).
 
 Le studio, lui, modifie des fichiers du sim — **cosmétiques uniquement**, en local, opt-in,
 avec restauration intégrale (`assets restore-all`). Aucune interception réseau, aucune
