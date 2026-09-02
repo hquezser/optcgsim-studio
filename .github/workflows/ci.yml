@@ -53,22 +53,29 @@ jobs:
           python -m pip install -e .
           python -m pip install pytest
 
-      - name: Vérifier qu'aucune dépendance tierce n'a été installée
+      - name: Le paquet ne déclare aucune dépendance tierce
         shell: bash
+        # On interroge les métadonnées du paquet INSTALLÉ, au lieu d'énumérer tout ce qui
+        # traîne dans l'environnement.
+        #
+        # La version précédente comparait `md.distributions()` à une liste blanche, et
+        # échouait donc sur les paquets préinstallés dans les images de runner GitHub —
+        # `typing_extensions` sur ubuntu/3.10, `pipx`/`click`/`filelock`/`platformdirs`/
+        # `userpath`/`argcomplete` sur windows. Elle testait l'image, pas le projet, et
+        # laissait la CI rouge en permanence. Aucune liste à maintenir ici.
+        #
+        # Complémentaire, pas redondant : tests/test_no_external_deps.py analyse l'AST de
+        # studio/ pour interdire tout `import` tiers ; cette étape couvre l'autre moitié,
+        # une dépendance déclarée dans pyproject.toml sans être encore importée.
         run: |
-          echo "Paquets présents en plus de pip/setuptools/pytest :"
           python - <<'PY'
           import importlib.metadata as md
-          # pytest et ses propres dépendances transitives — la liste vise `studio`, pas
-          # l'outillage de test. Vérifié localement : sans Pygments, la CI serait rouge dès
-          # le premier run (pytest >= 8.4 le tire).
-          attendus = {"optcgsim-studio", "pip", "setuptools", "wheel", "pytest",
-                      "iniconfig", "packaging", "pluggy", "exceptiongroup", "tomli",
-                      "colorama", "pygments"}
-          extra = sorted(d.metadata["Name"] for d in md.distributions()
-                         if d.metadata["Name"] and d.metadata["Name"].lower() not in attendus)
-          print(extra or "aucun")
-          assert not extra, f"dépendances inattendues installées : {extra}"
+          reqs = md.requires("optcgsim-studio") or []
+          # Les extras sont conditionnels et facultatifs par construction : seules les
+          # dépendances d'exécution inconditionnelles violent la promesse « zéro dépendance ».
+          dures = sorted(r for r in reqs if "extra ==" not in r)
+          print("Dépendances d'exécution déclarées :", dures or "aucune")
+          assert not dures, f"le paquet déclare des dépendances tierces : {dures}"
           PY
 
       - name: Suite de tests
