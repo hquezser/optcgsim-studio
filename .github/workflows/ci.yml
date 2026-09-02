@@ -17,10 +17,17 @@ jobs:
   tests:
     name: pytest · Python ${{ matrix.python }} · ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # Windows est INFORMATIF tant que la cartographie des chemins n'y est pas confirmée sur
-    # machine réelle (`gamepaths.py` la marque `verified=False`). Il signale les écarts de
-    # portabilité sans bloquer une livraison. À passer bloquant une fois vérifié.
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    # Windows est BLOQUANT depuis que la suite y passe (2026-09).
+    #
+    # Il était informatif, et c'est ce qui a laissé 32 tests rouges pendant un mois — donc
+    # cinq bugs bien réels : le confinement zip-slip refusait TOUT import de pack, les
+    # lectures sans encodage rendaient illisible toute decklist accentuée, et une clé de
+    # cible en séparateur natif faisait importer les packs sans reconnaître une seule carte.
+    # Un signal qu'on tolère en rouge finit par ne plus rien signaler.
+    #
+    # À ne pas confondre avec une garantie plus large : la cartographie des chemins Unity
+    # n'est toujours PAS confirmée sur machine réelle (`gamepaths.py` la marque
+    # `verified=False`). La suite passe, ce qui n'est pas la même affirmation.
     strategy:
       fail-fast: false
       matrix:
