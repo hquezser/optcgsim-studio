@@ -595,7 +595,12 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
     chosen: dict[str, Path] = {}
 
     def place(rel_target: Path, src: Path) -> None:
-        key = str(rel_target)
+        # `as_posix()` et non `str()` : cette clé sert d'identifiant de cible dans tout ce qui
+        # suit — elle est découpée par `rel.split("/")` pour la catégorisation, écrite dans
+        # `manifest.json`, et renvoyée dans le rapport. Avec `str()`, elle valait
+        # « Cards\OP01\OP01-001.png » sous Windows, le découpage ne rendait jamais « Cards »,
+        # et le pack ressortait SANS AUCUNE carte reconnue.
+        key = rel_target.as_posix()
         if key in chosen:
             rep.variants.append({"target": key, "kept": str(chosen[key].name),
                                  "dropped": src.name})
