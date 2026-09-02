@@ -286,7 +286,7 @@ class StudioService:
         return st
 
     def _register(self, pack_dir: Path, rep, follow: bool) -> dict:
-        manifest = json.loads((pack_dir / "manifest.json").read_text())
+        manifest = json.loads((pack_dir / "manifest.json").read_text(encoding="utf-8"))
         if follow:
             manifest["followed"] = True
         with self._store() as store:

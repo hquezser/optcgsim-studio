@@ -102,7 +102,7 @@ class Decklist:
         if path.exists() and path.read_text(errors="ignore") != text:
             raise ImportError_(
                 f"{path.name} existe déjà avec un contenu différent — choisir un autre nom")
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
         return path
 
 

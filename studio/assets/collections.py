@@ -136,4 +136,4 @@ def parse_text(text: str) -> Collection:
 
 def load(path: Path | str) -> Collection:
     """Charge depuis un fichier local (déjà téléchargé/uploadé — pas de résolution d'URL ici)."""
-    return parse_text(Path(path).read_text())
+    return parse_text(Path(path).read_text(encoding="utf-8"))

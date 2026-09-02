@@ -27,10 +27,10 @@ def _device_id(state_dir: Path) -> str:
     """Identifiant stable de CET appareil (fichier local, créé une fois)."""
     f = state_dir / "device_id"
     if f.exists():
-        return f.read_text().strip()
+        return f.read_text(encoding="utf-8").strip()
     did = uuid.uuid4().hex[:12]
     state_dir.mkdir(parents=True, exist_ok=True)
-    f.write_text(did)
+    f.write_text(did, encoding="utf-8")
     return did
 
 
@@ -51,7 +51,7 @@ class LocalStore:
         # WAL est donc une amélioration de réactivité, pas un correctif de panne observée.
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
-        self.conn.executescript(_SCHEMA.read_text())
+        self.conn.executescript(_SCHEMA.read_text(encoding="utf-8"))
         self.device_id = _device_id(db_path.parent)
         self.corrupt: list[str] = []      # enregistrements sautés par `list()`, pour rapport
         self._colonnes: dict[str, set[str]] = {}   # cache des colonnes réelles par table

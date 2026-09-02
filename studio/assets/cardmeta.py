@@ -25,7 +25,7 @@ TYPES = ("Leader", "Character", "Event", "Stage")
 def _types() -> dict[str, str]:
     """card_id -> type long. Vide si la table est absente/corrompue (défaut prudent)."""
     try:
-        raw = json.loads(_DATA.read_text()).get("types", {})
+        raw = json.loads(_DATA.read_text(encoding="utf-8")).get("types", {})
         return {cid: _LONG[s] for cid, s in raw.items() if s in _LONG}
     except (OSError, ValueError):
         return {}
@@ -61,7 +61,7 @@ def unlimited_ids() -> frozenset[str]:
     exemptées de la limite des 4 exemplaires par leur propre texte. Vide si la table est
     absente/corrompue (défaut prudent : on retombe sur la limite stricte)."""
     try:
-        raw = json.loads(_DATA.read_text()).get("unlimited", [])
+        raw = json.loads(_DATA.read_text(encoding="utf-8")).get("unlimited", [])
         return frozenset(cid for cid in raw if isinstance(cid, str))
     except (OSError, ValueError):
         return frozenset()

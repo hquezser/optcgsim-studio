@@ -114,7 +114,7 @@ class AssetManager:
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         self._manifest: dict[str, dict] = {}
         if self.manifest_path.exists():
-            self._manifest = json.loads(self.manifest_path.read_text())
+            self._manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
 
     # ------------------------------------------------------------ garde-fous
     def _allowed_roots(self) -> list[Path]:
@@ -183,7 +183,7 @@ class AssetManager:
 
     def _save_manifest(self) -> None:
         tmp = self.manifest_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._manifest, indent=1))
+        tmp.write_text(json.dumps(self._manifest, indent=1), encoding="utf-8")
         os.replace(tmp, self.manifest_path)
 
     # ------------------------------------------------------------ opérations publiques
@@ -266,7 +266,7 @@ class AssetManager:
         unknown = set(keys) - known
         # écrit la fusion dans un tmp studio, puis passe par le chemin swap standard
         tmp = self.state_dir / "translation.merged.txt"
-        tmp.write_text("\n".join(merged) + "\n")
+        tmp.write_text("\n".join(merged) + "\n", encoding="utf-8")
         self._swap(target, tmp, origin or str(overrides))
         tmp.unlink(missing_ok=True)
         if unknown:

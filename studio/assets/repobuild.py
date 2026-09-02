@@ -377,14 +377,14 @@ def load_build_log(out_dir: Path) -> list[dict]:
     path_prefix/lang distincts). Fichier caché, en dehors de tous les dépôts de famille :
     jamais poussé."""
     path = Path(out_dir) / _LOG_NAME
-    return json.loads(path.read_text()) if path.exists() else []
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
 
 
 def _record_build(out_dir: Path, sources: list[str], cards_as: str, split_cards_by_type: bool,
                   path_prefix: str | None, lang: str | None,
                   collection_label: str | None, collection_group: str | None) -> None:
     path = Path(out_dir) / _LOG_NAME
-    entries = json.loads(path.read_text()) if path.exists() else []
+    entries = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
     # dédup par (cards_as, split, path_prefix, lang) — PAS collection_label/group : ce sont de
     # la métadonnée d'AFFICHAGE sur une config déjà identifiée par les 4 champs ci-dessus, pas
     # un axe qui distingue deux builds différents. Changer juste le libellé entre deux
@@ -415,7 +415,7 @@ def _write_json_atomic(path: Path, data) -> None:
     et `config`, qui utilisent déjà ce motif.
     """
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, path)
 
 def _upsert_collection_entry(out_dir: Path, family: str, label: str | None,
@@ -429,7 +429,7 @@ def _upsert_collection_entry(out_dir: Path, family: str, label: str | None,
     upsert ne doit jamais effacer une URL déjà renseignée, seulement rafraîchir label/groupe.
     """
     path = Path(out_dir) / _COLLECTION_NAME
-    data = json.loads(path.read_text()) if path.exists() else {
+    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {
         "schema_version": 1, "name": Path(out_dir).name, "packs": []}
     existing = next((p for p in data.get("packs", []) if p.get("family") == family), None)
     url = existing.get("url", "") if existing else ""
@@ -463,7 +463,7 @@ Contenu : voir `MANIFEST.json`.
 def _finalize_repo(repo_dir: Path, stat: RepoStat, sources: list[str], git_init: bool,
                    files: dict[str, str]) -> None:
     manifest_path = repo_dir / "MANIFEST.json"
-    old = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    old = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
     # Compat : dans les tout premiers MANIFEST, "files" était un ENTIER (le compte, désormais
     # "file_count") ; la map chemin->sha1 n'existait pas. On repart alors d'un diff vide.
     old_files = old.get("files", {})
@@ -478,11 +478,12 @@ def _finalize_repo(repo_dir: Path, stat: RepoStat, sources: list[str], git_init:
         "file_count": stat.files, "bytes": stat.bytes, "by_type": stat.by_type,
         "sources": sources, "files": files,
     })
-    (repo_dir / "README.md").write_text(_README.format(fam=stat.family, n=len(sources)))
+    (repo_dir / "README.md").write_text(_README.format(fam=stat.family, n=len(sources)),
+                                     encoding="utf-8")
     if git_init:
         gi = repo_dir / ".gitignore"
         if not gi.exists():
-            gi.write_text(".DS_Store\n.work/\n")
+            gi.write_text(".DS_Store\n.work/\n", encoding="utf-8")
         if not (repo_dir / ".git").exists():
             try:
                 subprocess.run(["git", "init", "-q"], cwd=repo_dir, check=True,

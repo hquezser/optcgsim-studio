@@ -305,7 +305,7 @@ def cmd_packs_add(args) -> int:
                                      on_progress=_console_progress,
                                      only_categories=cats, only_cards=cards,
                                      token=Config().github_token())
-    manifest = json.loads((pack_dir / "manifest.json").read_text())
+    manifest = json.loads((pack_dir / "manifest.json").read_text(encoding="utf-8"))
     if args.follow:
         manifest["followed"] = True              # source re-téléchargeable via `packs update`
     with LocalStore(Path(args.db)) as store:
@@ -448,7 +448,7 @@ def cmd_packs_update(args) -> int:
             except (packlib.PackError, OSError) as e:
                 print(f"« {p['name']} » : échec du téléchargement/normalisation — {e}")
                 continue
-            new_man = json.loads((pack_dir / "manifest.json").read_text())
+            new_man = json.loads((pack_dir / "manifest.json").read_text(encoding="utf-8"))
             new_man["followed"] = True
             new_files = new_man.get("files", {})
             changed = sorted(f for f in new_files if old_files.get(f) != new_files[f])
@@ -570,7 +570,7 @@ def cmd_decks_export_pack(args) -> int:
             resolved.append(deckpack.ResolvedDeck(name=row["name"], tags=row.get("tags") or [],
                                                   deck=deck))
     pack = deckpack.generate(args.name, resolved, author=args.author)
-    Path(args.out).write_text(json.dumps(pack, indent=2, ensure_ascii=False))
+    Path(args.out).write_text(json.dumps(pack, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"« {args.name} » : {len(resolved)} deck(s) -> {args.out}")
     return 0
 
