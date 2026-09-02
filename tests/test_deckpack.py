@@ -15,7 +15,7 @@ VALID = ("1xPRB01-001\n4xST30-004\n4xOP10-005\n3xOP15-012\n4xOP12-008\n4xPRB02-0
 
 def test_resolve_inline_text_and_file(tmp_path):
     (tmp_path / "decks").mkdir()
-    (tmp_path / "decks" / "z.txt").write_text(VALID)
+    (tmp_path / "decks" / "z.txt").write_text(VALID, encoding="utf-8")
     manifest = {"name": "Meta OP16", "author": "Trecore", "decks": [
         {"name": "Sanji", "tags": ["meta", "op16"], "text": VALID},
         {"name": "Zoro", "tags": ["rogue"], "file": "decks/z.txt"},
@@ -60,7 +60,7 @@ def test_duplicate_names_disambiguated(tmp_path):
 
 
 def test_file_path_traversal_rejected(tmp_path):
-    (tmp_path / "secret.txt").write_text(VALID)
+    (tmp_path / "secret.txt").write_text(VALID, encoding="utf-8")
     manifest = {"name": "P", "decks": [{"name": "evil", "file": "../secret.txt"}]}
     rep = deckpack.resolve(manifest, tmp_path)
     assert rep.imported == [] and "illégal" in rep.failed[0]["reason"]
@@ -72,11 +72,11 @@ def test_empty_or_missing_decks_raises(tmp_path):
 
 
 def test_find_manifest_root_and_wrapped(tmp_path):
-    (tmp_path / "deckpack.json").write_text("{}")
+    (tmp_path / "deckpack.json").write_text("{}", encoding="utf-8")
     assert deckpack.find_manifest(tmp_path).name == "deckpack.json"
     wrapped = tmp_path / "w"
     (wrapped / "inner").mkdir(parents=True)
-    (wrapped / "inner" / "deckpack.json").write_text("{}")
+    (wrapped / "inner" / "deckpack.json").write_text("{}", encoding="utf-8")
     assert deckpack.find_manifest(wrapped).parent.name == "inner"
 
 
@@ -124,7 +124,7 @@ def test_tournament_deck_with_unlimited_card_imports_silently(tmp_path):
 
 def test_resolve_sets_source_to_pack_name_not_internal_file_or_url(tmp_path):
     (tmp_path / "decks").mkdir()
-    (tmp_path / "decks" / "z.txt").write_text(VALID)
+    (tmp_path / "decks" / "z.txt").write_text(VALID, encoding="utf-8")
     manifest = {"name": "Meta OP16", "decks": [
         {"name": "Sanji", "text": VALID},
         {"name": "Zoro", "file": "decks/z.txt"},
@@ -156,7 +156,7 @@ def test_from_source_ingests_and_cleans(tmp_path):
     content = tmp_path / "content"
     content.mkdir()
     (content / "deckpack.json").write_text(json.dumps(
-        {"name": "P", "decks": [{"name": "S", "text": VALID}]}))
+        {"name": "P", "decks": [{"name": "S", "text": VALID}]}), encoding="utf-8")
     work = tmp_path / "work"
     def fake_ingest(source, wd):
         return content
@@ -173,7 +173,7 @@ def test_absolute_file_path_rejected_without_reading(tmp_path):
     « aucune entrée reconnue » (refus après lecture), sinon le garde-fou ne garde rien.
     """
     outside = tmp_path / "hors_pack.txt"
-    outside.write_text(VALID)
+    outside.write_text(VALID, encoding="utf-8")
     pack_dir = tmp_path / "pack"
     pack_dir.mkdir()
 
@@ -188,7 +188,7 @@ def test_absolute_file_path_rejected_without_reading(tmp_path):
 def test_symlink_escaping_pack_rejected(tmp_path):
     """Un lien symbolique interne pointant hors du pack est couvert par la même résolution."""
     outside = tmp_path / "hors_pack.txt"
-    outside.write_text(VALID)
+    outside.write_text(VALID, encoding="utf-8")
     pack_dir = tmp_path / "pack"
     pack_dir.mkdir()
     (pack_dir / "innocent.txt").symlink_to(outside)
@@ -203,7 +203,7 @@ def test_ordinary_relative_file_still_resolves(tmp_path):
     """Non-régression : le cas légitime (fichier dans un sous-dossier du pack) marche."""
     pack_dir = tmp_path / "pack"
     (pack_dir / "decks").mkdir(parents=True)
-    (pack_dir / "decks" / "z.txt").write_text(VALID)
+    (pack_dir / "decks" / "z.txt").write_text(VALID, encoding="utf-8")
     rep = deckpack.resolve({"name": "P", "decks": [
         {"name": "Zoro", "file": "decks/z.txt"}]}, pack_dir)
     assert len(rep.imported) == 1 and rep.imported[0].deck.leader == "PRB01-001"

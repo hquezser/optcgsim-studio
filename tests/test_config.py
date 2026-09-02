@@ -3,6 +3,7 @@
 import json
 import os
 import stat
+import sys
 
 import pytest
 
@@ -44,6 +45,14 @@ def test_clear_token(cfg):
     assert cfg.github_token() is None
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Les bits de permission POSIX n'existent pas sur Windows : os.chmod n'y gère que "
+           "l'attribut lecture-seule, et restreindre l'accès demanderait des ACL — donc une "
+           "dépendance (pywin32) que le projet s'interdit. CONSÉQUENCE ASSUMÉE : sous "
+           "Windows, le fichier de configuration contenant le token GitHub n'est PAS "
+           "restreint au propriétaire.",
+)
 def test_config_file_is_owner_only(cfg):
     cfg.set_github_token("ghp_secret")
     mode = stat.S_IMODE(os.stat(cfg.path).st_mode)
@@ -88,7 +97,7 @@ def test_default_collection_source_coexists_with_token(cfg):
     assert cfg.github_token() == "ghp_secret"
     assert cfg.default_collection_source() == "/tmp/collection.json"
     # clairement pas un secret : PAS soumis au même traitement chmod-only-relevant
-    data = json.loads(cfg.path.read_text())
+    data = json.loads(cfg.path.read_text(encoding="utf-8"))
     assert data["default_collection_source"] == "/tmp/collection.json"
 
 

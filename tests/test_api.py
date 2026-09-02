@@ -100,7 +100,7 @@ def test_remove_deck_deletes_db_record_and_sim_file(svc):
 def test_remove_deck_keeps_file_if_modified_since_import(svc):
     r = svc.import_deck(text=_DECK50, name="Modifié")
     deck_id = svc.decks()[0]["id"]
-    Path(r["path"]).write_text("contenu retapé à la main, plus le deck importé\n")
+    Path(r["path"]).write_text("contenu retapé à la main, plus le deck importé\n", encoding="utf-8")
     rem = svc.remove_deck(deck_id)
     assert rem == {"name": "Modifié", "removed_file": False}
     assert svc.decks() == []                 # tombstone en base malgré tout
@@ -124,7 +124,7 @@ def test_import_deckpack_from_folder(svc, tmp_path):
         "name": "Meta OP16", "author": "Trecore", "decks": [
             {"name": "Aggro", "tags": ["meta"], "text": _DECK50},
             {"name": "Cassé", "text": "1xOP01-060\n4xAA01-001"},   # invalide
-        ]}))
+        ]}), encoding="utf-8")
     r = svc.import_deckpack(str(src))
     assert r["name"] == "Meta OP16"
     assert [d["name"] for d in r["imported"]] == ["Aggro"]
@@ -141,7 +141,7 @@ def test_validate_deckpack_is_dry_run(svc, tmp_path):
         "name": "Contrôle", "schema_version": 999, "decks": [
             {"name": "Ok", "text": _DECK50},
             {"name": "Cassé", "text": "1xOP01-060"},   # invalide
-        ]}))
+        ]}), encoding="utf-8")
     r = svc.validate_deckpack(str(src))
     assert r["valid"] is False
     assert [d["name"] for d in r["imported"]] == ["Ok"]
@@ -153,7 +153,7 @@ def test_validate_deckpack_is_dry_run(svc, tmp_path):
 
 # ------------------------------------------------------------------ sync jeu -> studio
 def test_sync_from_sim_imports_new_deck_written_directly_in_game(svc):
-    (svc.install.persistent / "FaitEnJeu.txt").write_text(_DECK50)
+    (svc.install.persistent / "FaitEnJeu.txt").write_text(_DECK50, encoding="utf-8")
     r = svc.sync_from_sim()
     assert r == {"new": ["FaitEnJeu"], "updated": [], "orphaned": []}
     row = svc.decks()[0]
@@ -161,14 +161,14 @@ def test_sync_from_sim_imports_new_deck_written_directly_in_game(svc):
 
 
 def test_sync_from_sim_preserves_tags_on_update(svc):
-    (svc.install.persistent / "FaitEnJeu.txt").write_text(_DECK50)
+    (svc.install.persistent / "FaitEnJeu.txt").write_text(_DECK50, encoding="utf-8")
     svc.sync_from_sim()
     deck_id = svc.decks()[0]["id"]
     with svc._store() as store:
         store.put("decks", {**store.get("decks", deck_id), "tags": ["gardé"]})
     changed = ("1xOP02-001\n" + "\n".join(f"4xCC{i:02d}-001" for i in range(12))
               + "\n2xDD01-001")
-    (svc.install.persistent / "FaitEnJeu.txt").write_text(changed)
+    (svc.install.persistent / "FaitEnJeu.txt").write_text(changed, encoding="utf-8")
     r = svc.sync_from_sim()
     assert r == {"new": [], "updated": ["FaitEnJeu"], "orphaned": []}
     row = svc.decks()[0]
@@ -176,7 +176,7 @@ def test_sync_from_sim_preserves_tags_on_update(svc):
 
 
 def test_sync_from_sim_reports_orphan_without_deleting(svc):
-    (svc.install.persistent / "FaitEnJeu.txt").write_text(_DECK50)
+    (svc.install.persistent / "FaitEnJeu.txt").write_text(_DECK50, encoding="utf-8")
     svc.sync_from_sim()
     (svc.install.persistent / "FaitEnJeu.txt").unlink()
     r = svc.sync_from_sim()
@@ -185,7 +185,7 @@ def test_sync_from_sim_reports_orphan_without_deleting(svc):
 
 
 def test_http_sync_from_sim(server, svc):
-    (svc.install.persistent / "FaitEnJeu.txt").write_text(_DECK50)
+    (svc.install.persistent / "FaitEnJeu.txt").write_text(_DECK50, encoding="utf-8")
     code, r = _post(server, "/api/decks/sync-from-sim", {})
     assert code == 200 and r["new"] == ["FaitEnJeu"]
 
@@ -234,7 +234,7 @@ def test_http_deckpack_is_job_based(server, svc, tmp_path):
     src = tmp_path / "dp"
     src.mkdir()
     (src / "deckpack.json").write_text(json.dumps(
-        {"name": "P", "decks": [{"name": "Solo", "tags": ["x"], "text": _DECK50}]}))
+        {"name": "P", "decks": [{"name": "Solo", "tags": ["x"], "text": _DECK50}]}), encoding="utf-8")
     code, r = _post(server, "/api/deckpacks/add", {"source": str(src)})
     assert code == 202 and "job_id" in r
     st = _wait_job(server, r["job_id"])
@@ -404,7 +404,7 @@ _COL_MANIFEST = {
 
 def test_resolve_collection_from_local_file(svc, tmp_path):
     p = tmp_path / "collection.json"
-    p.write_text(json.dumps(_COL_MANIFEST))
+    p.write_text(json.dumps(_COL_MANIFEST), encoding="utf-8")
     r = svc.resolve_collection(str(p))
     assert r["name"] == "FR classique + full-art"
     assert len(r["packs"]) == 3
@@ -421,7 +421,7 @@ def test_resolve_collection_missing_local_file_raises(svc, tmp_path):
 def test_resolve_collection_invalid_json_raises(svc, tmp_path):
     from studio.assets import collections
     p = tmp_path / "collection.json"
-    p.write_text("{ pas du json")
+    p.write_text("{ pas du json", encoding="utf-8")
     with pytest.raises(collections.CollectionError, match="JSON invalide"):
         svc.resolve_collection(str(p))
 
@@ -470,7 +470,7 @@ def test_resolve_collection_http_error_is_readable(svc, monkeypatch, tmp_path):
 
 def test_http_collections_resolve(server, tmp_path):
     p = tmp_path / "collection.json"
-    p.write_text(json.dumps(_COL_MANIFEST))
+    p.write_text(json.dumps(_COL_MANIFEST), encoding="utf-8")
     code, r = _post(server, "/api/collections/resolve", {"source": str(p)})
     assert code == 200
     assert r["name"] == "FR classique + full-art"
@@ -636,7 +636,7 @@ def test_import_deckpack_write_failure_does_not_drop_following_decks(svc, tmp_pa
             {"name": "Avant", "text": _DECK50},
             {"name": "Maudit", "text": _DECK50},
             {"name": "Après", "text": _DECK50},
-        ]}))
+        ]}), encoding="utf-8")
 
     from studio.decks import importer as _imp
     original = _imp.Decklist.save_to_sim

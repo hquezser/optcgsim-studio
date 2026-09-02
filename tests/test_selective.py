@@ -177,6 +177,6 @@ def test_add_pack_survives_a_partial_selective_fetch_failure(install, tmp_path, 
     assert rep.fetch_failed == [{"path": "Cards/OP01/OP01-016.png",
                                  "reason": "simulé : 404 transitoire"}]
     assert "non récupéré" in rep.summary()
-    manifest = json.loads((pack / "manifest.json").read_text())
+    manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["fetch_failed"] == rep.fetch_failed, (
         "l'échec doit survivre au redémarrage du studio (persisté dans le manifeste)")

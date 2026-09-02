@@ -40,7 +40,7 @@ def _noms(noeud) -> set[str]:
 
 def _imports_au_niveau_module(fichier: Path) -> set[str]:
     """Imports exécutés à l'IMPORT du module — ceux qui cassent tout s'ils manquent."""
-    arbre = ast.parse(fichier.read_text(), filename=str(fichier))
+    arbre = ast.parse(fichier.read_text(encoding="utf-8"), filename=str(fichier))
     out: set[str] = set()
     a_visiter = list(arbre.body)
     corps_differe = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
@@ -56,7 +56,7 @@ def _imports_au_niveau_module(fichier: Path) -> set[str]:
 
 
 def _tous_les_imports(fichier: Path) -> set[str]:
-    arbre = ast.parse(fichier.read_text(), filename=str(fichier))
+    arbre = ast.parse(fichier.read_text(encoding="utf-8"), filename=str(fichier))
     out: set[str] = set()
     for noeud in ast.walk(arbre):
         out |= _noms(noeud)
@@ -125,7 +125,7 @@ def test_certifi_reste_facultatif_a_l_execution():
 
 def test_pyproject_declare_bien_zero_dependance():
     """La promesse doit aussi être tenue dans les métadonnées d'installation."""
-    texte = (RACINE / "pyproject.toml").read_text()
+    texte = (RACINE / "pyproject.toml").read_text(encoding="utf-8")
     assert "dependencies = []" in texte, (
         "pyproject.toml doit déclarer `dependencies = []` — sinon `pip install` tirerait "
         "des paquets tiers malgré la convention.")
@@ -163,7 +163,7 @@ def test_tout_le_code_respecte_la_grammaire_de_la_version_minimale():
     """
     import re
     contrainte = re.search(r'requires-python\s*=\s*"[^0-9]*(\d+)\.(\d+)"',
-                           (RACINE / "pyproject.toml").read_text())
+                           (RACINE / "pyproject.toml").read_text(encoding="utf-8"))
     assert contrainte, "requires-python illisible dans pyproject.toml"
     minimale = (int(contrainte.group(1)), int(contrainte.group(2)))
 
@@ -172,7 +172,7 @@ def test_tout_le_code_respecte_la_grammaire_de_la_version_minimale():
         p for p in (RACINE / "tests").rglob("*.py") if "__pycache__" not in p.parts)
     for fichier in fichiers:
         try:
-            ast.parse(fichier.read_text(), filename=str(fichier), feature_version=minimale)
+            ast.parse(fichier.read_text(encoding="utf-8"), filename=str(fichier), feature_version=minimale)
         except SyntaxError as e:
             echecs.append(f"{fichier.relative_to(RACINE)}:{e.lineno} — {e.msg}")
 
@@ -192,7 +192,7 @@ def test_pas_d_antislash_dans_une_expression_de_f_string():
     fichiers = _fichiers_du_paquet() + sorted(
         p for p in (RACINE / "tests").rglob("*.py") if "__pycache__" not in p.parts)
     for fichier in fichiers:
-        source = fichier.read_text()
+        source = fichier.read_text(encoding="utf-8")
         arbre = ast.parse(source, filename=str(fichier))
         for noeud in ast.walk(arbre):
             if not isinstance(noeud, ast.JoinedStr):

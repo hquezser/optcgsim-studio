@@ -89,8 +89,8 @@ def _source_tree(root: Path) -> Path:
     make_png(root / "Cards" / "Don" / "Don.png")                  # don
     make_png(root / "Playmats" / "Blue.png", 1920, 1080)          # playmat
     make_png(root / "CardBacks" / "CardBackRegular.png")          # dos
-    (root / "TRANSLATION.txt").write_text("Key=Val\n")            # traduction
-    (root / "README.md").write_text("ignore")                    # other -> non classé
+    (root / "TRANSLATION.txt").write_text("Key=Val\n", encoding="utf-8")            # traduction
+    (root / "README.md").write_text("ignore", encoding="utf-8")                    # other -> non classé
     return root
 
 
@@ -113,7 +113,7 @@ def test_build_routes_into_family_repos(tmp_path):
     assert rep.unclassified and rep.unclassified[0]["path"] == "README.md"
 
     # MANIFEST par dépôt, avec compte par type pour les cartes (Don inclus)
-    man = json.loads((out / "cards-alt" / "MANIFEST.json").read_text())
+    man = json.loads((out / "cards-alt" / "MANIFEST.json").read_text(encoding="utf-8"))
     assert man["family"] == "cards-alt"
     assert man["by_type"] == {"Leaders": 1, "Characters": 1, "Don": 1}
     assert man["file_count"] == 3
@@ -123,7 +123,7 @@ def test_build_routes_into_family_repos(tmp_path):
         "Leaders/Cards/OP01/OP01-001.png"]
     assert rep.repos["cards-alt"].changed == [] and rep.repos["cards-alt"].orphans == []
     # cardbacks reste un dépôt à part, dédié aux VRAIS dos de cartes
-    cb = json.loads((out / "cardbacks" / "MANIFEST.json").read_text())
+    cb = json.loads((out / "cardbacks" / "MANIFEST.json").read_text(encoding="utf-8"))
     assert cb["file_count"] == 1 and cb["by_type"] == {}
 
 
@@ -135,8 +135,8 @@ def test_build_theme_junk_txt_files_never_pollute_translations(tmp_path):
     make_png(src / "Playmats" / "Blue.png", 1920, 1080)
     make_png(src / "CardBacks" / "CardBackRegular.png")
     (src / "instructions.txt").write_text(
-        "*** How to Install ***\n\n1. Copy the contents to your install's StreamingAssets…")
-    (src / "CardBackRegular.txt").write_text("test")   # erreur d'extension côté auteur du thème
+        "*** How to Install ***\n\n1. Copy the contents to your install's StreamingAssets…", encoding="utf-8")
+    (src / "CardBackRegular.txt").write_text("test", encoding="utf-8")   # erreur d'extension côté auteur du thème
     out = tmp_path / "out"
     rep = repobuild.build(["theme-link"], out, cards_as="alt",
                           ingest=lambda s, wd, on_progress=None, token=None: src, git_init=False)
@@ -250,7 +250,7 @@ def _fr_mixed_source(root: Path) -> Path:
     cas réel signalé : un repo FR github avec traductions + cartes classiques + alternatives."""
     make_png(root / "FR_classique" / "OP01" / "OP01-001_OVERRIDE.png")
     make_png(root / "FR_alt" / "OP01" / "OP01-001_alt.png")
-    (root / "TRANSLATION.txt").write_text("Key=Val\n")
+    (root / "TRANSLATION.txt").write_text("Key=Val\n", encoding="utf-8")
     return root
 
 
@@ -296,7 +296,7 @@ def test_path_prefix_never_excludes_shared_translation_file(tmp_path):
     ingest = lambda s, wd, on_progress=None, token=None: src
     rep = repobuild.build(["fr"], out, cards_as="translated",
                           path_prefix="FR_classique", ingest=ingest, git_init=False)
-    assert (out / "translations" / "TRANSLATION.txt").read_text() == "Key=Val\n"
+    assert (out / "translations" / "TRANSLATION.txt").read_text(encoding="utf-8") == "Key=Val\n"
     # le fichier partagé n'est jamais compté comme "hors périmètre"
     assert rep.excluded_by_prefix == 1   # uniquement FR_alt/OP01-001_alt.png
 
@@ -398,12 +398,12 @@ def test_rebuild_over_legacy_manifest_with_int_files(tmp_path):
     # simule un ancien dépôt : MANIFEST avec l'ancien schéma ("files": <int>)
     legacy = out / "cards-alt"
     legacy.mkdir(parents=True)
-    (legacy / "MANIFEST.json").write_text(json.dumps({"family": "cards-alt", "files": 42}))
+    (legacy / "MANIFEST.json").write_text(json.dumps({"family": "cards-alt", "files": 42}), encoding="utf-8")
 
     rep = repobuild.build(["s"], out, ingest=lambda s, wd, on_progress=None, token=None: src, git_init=False)
     assert rep.repos["cards-alt"].added == ["Leaders/Cards/OP01/OP01-001.png"]
     assert rep.repos["cards-alt"].orphans == []      # l'entier n'est pas traité comme des chemins
-    man = json.loads((legacy / "MANIFEST.json").read_text())
+    man = json.loads((legacy / "MANIFEST.json").read_text(encoding="utf-8"))
     assert isinstance(man["files"], dict)            # migré vers la map chemin->sha1
 
 
@@ -446,7 +446,7 @@ def test_build_uses_selective_fetch_when_github_and_prefix(tmp_path, monkeypatch
         for p in paths:
             (Path(dest) / p).parent.mkdir(parents=True, exist_ok=True)
             if p.endswith(".txt"):
-                (Path(dest) / p).write_text("Key=Val\n")
+                (Path(dest) / p).write_text("Key=Val\n", encoding="utf-8")
             else:
                 make_png(Path(dest) / p)
         return Path(dest)
@@ -683,7 +683,7 @@ def test_build_upserts_collection_entry_per_family(tmp_path):
     repobuild.build(["s"], out, cards_as="translated-fr-classic",
                     collection_label="Cartes FR classiques", collection_group="cards",
                     ingest=lambda s, wd, on_progress=None, token=None: src, git_init=False)
-    data = json.loads((out / "collection.json").read_text())
+    data = json.loads((out / "collection.json").read_text(encoding="utf-8"))
     assert data["packs"] == [{"family": "translated-fr-classic", "url": "",
                              "label": "Cartes FR classiques", "variant_group": "cards"}]
 
@@ -693,7 +693,7 @@ def test_build_collection_label_defaults_to_family_name(tmp_path):
     out = tmp_path / "out"
     repobuild.build(["s"], out, cards_as="alt",
                     ingest=lambda s, wd, on_progress=None, token=None: src, git_init=False)
-    data = json.loads((out / "collection.json").read_text())
+    data = json.loads((out / "collection.json").read_text(encoding="utf-8"))
     assert data["packs"] == [{"family": "cards-alt", "url": "", "label": "cards-alt",
                              "variant_group": None}]
 
@@ -707,7 +707,7 @@ def test_build_upserts_without_duplicating_same_family(tmp_path):
                     git_init=False)
     repobuild.build(["s"], out, cards_as="alt", collection_label="Nom mis à jour", ingest=ingest,
                     git_init=False)
-    data = json.loads((out / "collection.json").read_text())
+    data = json.loads((out / "collection.json").read_text(encoding="utf-8"))
     assert len(data["packs"]) == 1
     assert data["packs"][0]["label"] == "Nom mis à jour"
 
@@ -721,13 +721,13 @@ def test_build_preserves_manually_filled_url_across_rebuilds(tmp_path):
     repobuild.build(["s"], out, cards_as="alt", ingest=ingest, git_init=False)
 
     manifest_path = out / "collection.json"
-    data = json.loads(manifest_path.read_text())
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
     data["packs"][0]["url"] = "https://github.com/hquezser/optcgsim-cards-alt"
-    manifest_path.write_text(json.dumps(data))
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
 
     repobuild.build(["s"], out, cards_as="alt", collection_label="Alt-arts", ingest=ingest,
                     git_init=False)
-    data = json.loads(manifest_path.read_text())
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert data["packs"][0]["url"] == "https://github.com/hquezser/optcgsim-cards-alt"
     assert data["packs"][0]["label"] == "Alt-arts"   # le label, lui, a bien été rafraîchi
 
@@ -749,7 +749,7 @@ def test_collection_label_and_group_persisted_and_replayed_by_update(tmp_path):
     # effacé label/groupe -> update() doit les régénérer depuis le journal, pas les perdre.
     make_png(src / "Cards" / "OP14" / "OP14-018.png")
     repobuild.update(out, ingest=ingest)
-    data = json.loads((out / "collection.json").read_text())
+    data = json.loads((out / "collection.json").read_text(encoding="utf-8"))
     assert data["packs"][0]["label"] == "Alt-arts"
     assert data["packs"][0]["variant_group"] == "cards"
 
@@ -780,7 +780,7 @@ def test_interrupted_manifest_write_leaves_previous_intact(tmp_path, monkeypatch
     repobuild.build(["s"], out, ingest=lambda s, wd, on_progress=None, token=None: src,
                     git_init=False)
     manifest = out / "cards-alt" / "MANIFEST.json"
-    avant = manifest.read_text()
+    avant = manifest.read_text(encoding="utf-8")
     assert json.loads(avant)["file_count"] == 1
 
     # deuxième build : la bascule finale échoue (disque plein, coupure…)
@@ -791,8 +791,8 @@ def test_interrupted_manifest_write_leaves_previous_intact(tmp_path, monkeypatch
         repobuild.build(["s"], out, ingest=lambda s, wd, on_progress=None, token=None: src,
                         git_init=False)
 
-    assert manifest.read_text() == avant, "l'ancien manifeste doit être intact"
-    assert json.loads(manifest.read_text())            # et toujours du JSON valide
+    assert manifest.read_text(encoding="utf-8") == avant, "l'ancien manifeste doit être intact"
+    assert json.loads(manifest.read_text(encoding="utf-8"))            # et toujours du JSON valide
 
 
 # ------------------------------------- P15.6 : le dossier de travail ne reste pas sur le disque
@@ -834,7 +834,7 @@ def test_build_does_not_delete_a_work_dir_it_was_given(tmp_path):
     src = _minimal_card_src(tmp_path / "src", "OP01-001.png")
     impose = tmp_path / "a_moi"
     impose.mkdir()
-    (impose / "temoin.txt").write_text("ne pas supprimer")
+    (impose / "temoin.txt").write_text("ne pas supprimer", encoding="utf-8")
 
     def ingest_realiste(s, wd, on_progress=None, token=None):
         Path(wd).mkdir(parents=True, exist_ok=True)
