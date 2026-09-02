@@ -343,45 +343,49 @@ class AssetManager:
             if src.is_symlink():
                 report["ignored"].append({"path": src.name, "reason": "symlink refusé"})
                 continue
+            # `as_posix()` partout en aval : ces valeurs partent dans le RAPPORT, qui est
+            # lu par l'API, l'UI et les tests. Avec `str()`, un rapport produit sous
+            # Windows portait « Playmats\\Blue.png » et devenait incomparable à celui
+            # produit ailleurs.
             rel = src.relative_to(root)
             ext = src.suffix.lower()
             if ext == ".txt":
-                report["skipped_txt"].append(str(rel))
+                report["skipped_txt"].append(rel.as_posix())
                 continue
             if ext not in (".png", ".jpg", ".jpeg"):
                 continue        # non-image (manifest.json, README, .DS_Store…) : ignoré en silence
-            if only is not None and self.mirror_category(str(rel)) not in only:
-                report["filtered"].append(str(rel))
+            if only is not None and self.mirror_category(rel.as_posix()) not in only:
+                report["filtered"].append(rel.as_posix())
                 continue
             target = (sa / rel)
             if not target.exists():
                 report["ignored"].append(
-                    {"path": str(rel), "reason": "aucune cible correspondante dans le jeu"})
+                    {"path": rel.as_posix(), "reason": "aucune cible correspondante dans le jeu"})
                 continue
             # collision : cette cible est déjà tenue par un AUTRE pack (dernier appliqué gagne ;
             # le backup reste l'ORIGINAL, donc restore ramène toujours au jeu d'origine).
             prev = self._manifest.get(str(target.resolve()))
             if prev and prev.get("source") not in (None, origin):
-                report["collisions"].append({"path": str(rel), "previous": prev["source"]})
+                report["collisions"].append({"path": rel.as_posix(), "previous": prev["source"]})
             # format : le miroir doit respecter le format de la cible existante
             t_fmt = "png" if target.suffix.lower() == ".png" else "jpeg"
             try:
                 s_fmt, _, _ = image_info(src)
             except AssetError as e:
-                report["ignored"].append({"path": str(rel), "reason": str(e)})
+                report["ignored"].append({"path": rel.as_posix(), "reason": str(e)})
                 continue
             if s_fmt != t_fmt:
                 report["ignored"].append(
-                    {"path": str(rel), "reason": f"format {s_fmt} ≠ cible {t_fmt}"})
+                    {"path": rel.as_posix(), "reason": f"format {s_fmt} ≠ cible {t_fmt}"})
                 continue
             if dry_run:
-                report["applied"].append(str(rel))         # ce qui SERAIT remplacé
+                report["applied"].append(rel.as_posix())         # ce qui SERAIT remplacé
                 continue
             try:
                 self._swap(target, src, origin)
-                report["applied"].append(str(rel))
+                report["applied"].append(rel.as_posix())
             except AssetError as e:
-                report["ignored"].append({"path": str(rel), "reason": str(e)})
+                report["ignored"].append({"path": rel.as_posix(), "reason": str(e)})
         return report
 
     def apply_pack(self, pack_dir: Path) -> dict[str, int]:
