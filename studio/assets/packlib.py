@@ -609,7 +609,7 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
         if f.is_symlink():
             rep.unclassified.append({"path": f.name, "reason": "symlink refusé"})
             continue
-        rel_str = str(f.relative_to(src_dir))
+        rel_str = f.relative_to(src_dir).as_posix()
         # filtre sélectif (P7) : exclu par CHOIX -> rapporté à part, jamais copié.
         if (only_categories is not None or only_cards is not None) \
                 and not keep_rel(rel_str, only_categories, only_cards):
@@ -622,7 +622,7 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
                 translation_src = f
                 rep.translation = True
             else:
-                rep.unclassified.append({"path": str(f.relative_to(src_dir)),
+                rep.unclassified.append({"path": f.relative_to(src_dir).as_posix(),
                                          "reason": "2e fichier de traduction ignoré"})
             continue
         if ext not in IMAGE_EXT:
@@ -647,7 +647,7 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
             continue
         # 4. non classé
         rep.unclassified.append(
-            {"path": str(f.relative_to(src_dir)),
+            {"path": f.relative_to(src_dir).as_posix(),
              "reason": "ni chemin miroir, ni id de carte, ni asset spécial reconnu"})
 
     # matérialise le pack canonique + empreinte par fichier (pour le delta d'`update`)
