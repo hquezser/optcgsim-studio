@@ -156,7 +156,7 @@ def from_source(source: str | Path, ingest, work_dir: Path,
     import shutil
     try:
         src = ingest(source, work_dir)
-        manifest = json.loads(find_manifest(src).read_text())
+        manifest = json.loads(find_manifest(src).read_text(encoding="utf-8"))
         return resolve(manifest, find_manifest(src).parent, from_url=from_url)
     finally:
         if Path(work_dir).exists():

@@ -236,7 +236,13 @@ def _safe_extract(zf: zipfile.ZipFile, dest: Path,
         name = member.filename.lstrip("/\\")
         if name:      # sinon : marqueur de dossier racine (entrée '/' des exports Dropbox)
             target = (dest / name).resolve()
-            if not (target == dest or str(target).startswith(str(dest) + "/")):
+            # `is_relative_to` plutôt qu'une comparaison de chaînes : la version précédente
+            # testait `str(target).startswith(str(dest) + "/")` avec une barre oblique en
+            # dur. Sur Windows les chemins sont séparés par `\`, la condition était donc
+            # TOUJOURS fausse et chaque membre légitime était rejeté en zip-slip — le studio
+            # refusait tout import de pack sous Windows. Un test de confinement doit
+            # raisonner sur des chemins, jamais sur leur représentation textuelle.
+            if not target.is_relative_to(dest):
                 raise PackError(f"Entrée d'archive hors dossier (zip-slip) : {member.filename}")
         try:
             zf.extract(member, dest)
@@ -681,7 +687,7 @@ def normalize(src_dir: Path, install: GameInstall, name: str,
         "translation": rep.translation, "present_in_install": rep.present_in_install,
         "unclassified": rep.unclassified, "variants": rep.variants,
         "filtered": len(rep.filtered), "fetch_failed": rep.fetch_failed, "files": files,
-    }, indent=1, ensure_ascii=False))
+    }, indent=1, ensure_ascii=False), encoding="utf-8")
     return pack_dir, rep
 
 

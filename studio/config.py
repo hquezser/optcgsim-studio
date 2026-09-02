@@ -30,14 +30,14 @@ class Config:
 
     def _read(self) -> dict:
         try:
-            return json.loads(self.path.read_text())
+            return json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
 
     def _write(self, data: dict) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=1))
+        tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
         os.replace(tmp, self.path)
         try:
             os.chmod(self.path, 0o600)      # secret : lisible par le seul propriétaire
