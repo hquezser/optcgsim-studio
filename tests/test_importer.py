@@ -147,7 +147,7 @@ def test_html_without_decklist_fails_with_advice():
 def test_save_to_sim_idempotent_but_no_clobber(tmp_path):
     deck = parse_text(NATIVE)
     p = deck.save_to_sim("Import Test", tmp_path)
-    assert p.read_text() == deck.to_native_text()
+    assert p.read_text(encoding="utf-8") == deck.to_native_text()
     deck.save_to_sim("Import Test", tmp_path)          # même contenu : idempotent
     other = Decklist(leader="OP01-060",
                      cards={f"AA{i:02d}-001": 4 for i in range(12)} | {"BB01-001": 2})
@@ -157,24 +157,24 @@ def test_save_to_sim_idempotent_but_no_clobber(tmp_path):
 
 # ------------------------------------------------------------------ scan du dossier persistant
 def test_scan_persistent_decks_finds_valid_txt(tmp_path):
-    (tmp_path / "MonDeck.txt").write_text(NATIVE)
+    (tmp_path / "MonDeck.txt").write_text(NATIVE, encoding="utf-8")
     found = scan_persistent_decks(tmp_path)
     assert len(found) == 1
     assert found[0].name == "MonDeck" and found[0].source == "sim" and found[0].total == 50
 
 
 def test_scan_persistent_decks_ignores_non_deck_txt(tmp_path):
-    (tmp_path / "MonDeck.txt").write_text(NATIVE)
-    (tmp_path / "readme.txt").write_text("pas une decklist, juste du texte\n")
+    (tmp_path / "MonDeck.txt").write_text(NATIVE, encoding="utf-8")
+    (tmp_path / "readme.txt").write_text("pas une decklist, juste du texte\n", encoding="utf-8")
     found = scan_persistent_decks(tmp_path)
     assert [d.name for d in found] == ["MonDeck"]
 
 
 def test_scan_persistent_decks_ignores_subdirectories(tmp_path):
-    (tmp_path / "MonDeck.txt").write_text(NATIVE)
+    (tmp_path / "MonDeck.txt").write_text(NATIVE, encoding="utf-8")
     versioned = tmp_path / "1.2.3" / "Cards"
     versioned.mkdir(parents=True)
-    (versioned / "cache.txt").write_text(NATIVE)      # même contenu, mais sous-dossier
+    (versioned / "cache.txt").write_text(NATIVE, encoding="utf-8")      # même contenu, mais sous-dossier
     found = scan_persistent_decks(tmp_path)
     assert [d.name for d in found] == ["MonDeck"]
 
@@ -191,7 +191,7 @@ def store(tmp_path):
 
 
 def test_sync_new_deck_persisted_with_source_sim(tmp_path, store):
-    (tmp_path / "DuJeu.txt").write_text(NATIVE)
+    (tmp_path / "DuJeu.txt").write_text(NATIVE, encoding="utf-8")
     r = sync_with_store(tmp_path, store)
     assert r == {"new": ["DuJeu"], "updated": [], "orphaned": []}
     row = store.list("decks")[0]
@@ -199,7 +199,7 @@ def test_sync_new_deck_persisted_with_source_sim(tmp_path, store):
 
 
 def test_sync_is_additive_second_run_idempotent(tmp_path, store):
-    (tmp_path / "DuJeu.txt").write_text(NATIVE)
+    (tmp_path / "DuJeu.txt").write_text(NATIVE, encoding="utf-8")
     sync_with_store(tmp_path, store)
     r = sync_with_store(tmp_path, store)
     assert r == {"new": [], "updated": [], "orphaned": []}
@@ -207,14 +207,14 @@ def test_sync_is_additive_second_run_idempotent(tmp_path, store):
 
 
 def test_sync_updates_changed_deck_preserving_tags(tmp_path, store):
-    (tmp_path / "DuJeu.txt").write_text(NATIVE)
+    (tmp_path / "DuJeu.txt").write_text(NATIVE, encoding="utf-8")
     sync_with_store(tmp_path, store)
     row = store.list("decks")[0]
     store.put("decks", {**row, "tags": ["mon-tag"]})   # tag posé côté studio
     # le deck a changé EN JEU (nouveau leader/cartes, mais on garde le même fichier .txt)
     changed = Decklist(leader="OP01-060",
                        cards={f"AA{i:02d}-001": 4 for i in range(12)} | {"BB01-001": 2})
-    (tmp_path / "DuJeu.txt").write_text(changed.to_native_text())
+    (tmp_path / "DuJeu.txt").write_text(changed.to_native_text(), encoding="utf-8")
     r = sync_with_store(tmp_path, store)
     assert r == {"new": [], "updated": ["DuJeu"], "orphaned": []}
     updated_row = store.get("decks", row["id"])
@@ -222,7 +222,7 @@ def test_sync_updates_changed_deck_preserving_tags(tmp_path, store):
 
 
 def test_sync_orphaned_deck_reported_not_deleted(tmp_path, store):
-    (tmp_path / "DuJeu.txt").write_text(NATIVE)
+    (tmp_path / "DuJeu.txt").write_text(NATIVE, encoding="utf-8")
     sync_with_store(tmp_path, store)
     (tmp_path / "DuJeu.txt").unlink()                 # supprimé côté jeu
     r = sync_with_store(tmp_path, store)

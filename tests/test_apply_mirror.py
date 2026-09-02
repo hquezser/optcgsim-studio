@@ -43,7 +43,7 @@ def install(tmp_path) -> GameInstall:
     make_png(sa / "Playmats" / "Blue.png", 1920, 1080)
     make_png(sa / "CardBacks" / "CardBackRegular.png")
     make_jpeg(sa / "background.jpg")
-    (sa / "TRANSLATION.txt").write_text("Button.Back=Back\n")
+    (sa / "TRANSLATION.txt").write_text("Button.Back=Back\n", encoding="utf-8")
     return GameInstall(app_root=tmp_path / "app", streaming_assets=sa,
                        persistent=tmp_path / "persist", os_name="test", verified=True)
 
@@ -90,7 +90,7 @@ def test_mirror_never_creates_unknown_files(mgr, install, tmp_path):
 
 def test_mirror_skips_translation_txt(mgr, tmp_path):
     pack = _themer_pack(tmp_path / "pack")
-    (pack / "TRANSLATION.txt").write_text("Button.Back=Retour\n")
+    (pack / "TRANSLATION.txt").write_text("Button.Back=Retour\n", encoding="utf-8")
     rep = mgr.apply_mirror(pack)
     assert rep["skipped_txt"] == ["TRANSLATION.txt"]       # -> passe par apply_translation
 

@@ -204,7 +204,7 @@ def test_cli_and_api_persist_a_deck_identically(tmp_path):
 
     comparable = lambda d: {k: d[k] for k in ("name", "leader", "cards", "tags", "source")}
     assert comparable(par_api) == comparable(par_cli)
-    assert chemin.read_text() == (inst_api.persistent / "MonDeck.txt").read_text()
+    assert chemin.read_text(encoding="utf-8") == (inst_api.persistent / "MonDeck.txt").read_text(encoding="utf-8")
 
 
 def test_persist_deck_creates_the_default_profile_once(tmp_path):

@@ -52,7 +52,7 @@ def test_themer_mirror_layout_preserved(install, lib, tmp_path):
     make_png(src / "Cards" / "Don" / "Don.png")
     make_png(src / "Playmats" / "Blue.png", 2560, 1440)
     make_png(src / "CardBacks" / "CardBackRegular.png")
-    (src / "install_guide.txt").write_text("copy into StreamingAssets\n")   # pas Clé=Valeur
+    (src / "install_guide.txt").write_text("copy into StreamingAssets\n", encoding="utf-8")   # pas Clé=Valeur
     pack, rep = packlib.normalize(src, install, "Themer", "themer.zip", lib)
 
     assert (pack / "Cards" / "OP01" / "OP01-001.png").exists()
@@ -82,7 +82,7 @@ def test_fr_repo_override_and_translation(install, lib, tmp_path):
     make_png(src / "FR_full_art" / "OP01" / "OP01-003_OVERRIDE.png", 480, 671)
     (src / "TRANSLATION.txt").write_text(
         "Button.Single=Solo\nButton.Multi=Multi\nButton.Back=Retour\n"
-        "Button.Start=Commencer\nButton.Save=Sauver\nButton.Load=Charger\n")
+        "Button.Start=Commencer\nButton.Save=Sauver\nButton.Load=Charger\n", encoding="utf-8")
     pack, rep = packlib.normalize(src, install, "FR", "github", lib)
 
     # _OVERRIDE retiré, remappé sous Cards/<SET>/
@@ -119,7 +119,7 @@ def test_manifest_written(install, lib, tmp_path):
     make_png(src / "Cards" / "OP01" / "OP01-001.png")
     pack, rep = packlib.normalize(src, install, "M", "src", lib)
     import json
-    manifest = json.loads((pack / "manifest.json").read_text())
+    manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["name"] == "M" and manifest["cards"] == ["OP01-001"]
 
 
@@ -166,7 +166,7 @@ def test_add_pack_unwraps_github_single_folder(install, lib, tmp_path):
     # zip GitHub : tout est sous « repo-main/ »
     wrapped = tmp_path / "src" / "OPTCGSim_FR-main"
     make_png(wrapped / "FR_classique" / "OP01" / "OP01-001_OVERRIDE.png")
-    (wrapped / "TRANSLATION.txt").write_text("\n".join(f"K{i}=v" for i in range(6)))
+    (wrapped / "TRANSLATION.txt").write_text("\n".join(f"K{i}=v" for i in range(6)), encoding="utf-8")
     pack, rep = packlib.add_pack(tmp_path / "src", install, name="FR", lib_dir=lib,
                                  work_dir=tmp_path / "src")
     assert "OP01-001" in rep.cards and rep.translation
@@ -181,7 +181,7 @@ def test_add_pack_unwraps_github_single_folder(install, lib, tmp_path):
 def test_normalize_refuses_name_escaping_library(install, lib, tmp_path, hostile):
     lib.mkdir(parents=True)
     sentinel = lib.parent / "studio.db"                 # voisin de la bibliothèque
-    sentinel.write_text("mes decks")
+    sentinel.write_text("mes decks", encoding="utf-8")
     (lib / "PackExistant").mkdir()
     src = tmp_path / "src"
     make_png(src / "Cards" / "OP01" / "OP01-001.png", 960, 1342)
@@ -189,7 +189,7 @@ def test_normalize_refuses_name_escaping_library(install, lib, tmp_path, hostile
     with pytest.raises(packlib.PackError, match="invalide"):
         packlib.normalize(src, install, hostile, "x", lib)
 
-    assert sentinel.read_text() == "mes decks"          # rien n'a été effacé
+    assert sentinel.read_text(encoding="utf-8") == "mes decks"          # rien n'a été effacé
     assert (lib / "PackExistant").is_dir()
     assert lib.is_dir()
 

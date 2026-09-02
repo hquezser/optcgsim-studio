@@ -84,7 +84,7 @@ def test_parse_text_and_load(tmp_path):
     assert len(col.packs) == 3
 
     p = tmp_path / "collection.json"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
     col2 = collections.load(p)
     assert col2.name == col.name
 

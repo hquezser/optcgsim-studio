@@ -48,7 +48,7 @@ def fake_install(tmp_path) -> GameInstall:
     make_png(sa / "CardBacks" / "CardBackDon.png")
     make_jpeg(sa / "background.jpg", 1920, 1080)
     (sa / "TRANSLATION.txt").write_text(
-        "Button.Single=Solo v Self\nButton.Multi=Multiplayer\nButton.Back=Back\n")
+        "Button.Single=Solo v Self\nButton.Multi=Multiplayer\nButton.Back=Back\n", encoding="utf-8")
     return GameInstall(app_root=tmp_path / "app", streaming_assets=sa,
                        persistent=persistent, os_name="test", verified=True)
 
@@ -146,14 +146,14 @@ def test_unknown_card_rejected(mgr, tmp_path):
 # ------------------------------------------------------------------ traduction (fusion)
 def test_translation_merge_keeps_unknown_keys_official(mgr, fake_install, tmp_path):
     ov = tmp_path / "fr.txt"
-    ov.write_text("Button.Single=Solo contre soi\nButton.Ghost=N'existe pas\n")
+    ov.write_text("Button.Single=Solo contre soi\nButton.Ghost=N'existe pas\n", encoding="utf-8")
     mgr.apply_translation(ov)
-    txt = fake_install.translation_file.read_text()
+    txt = fake_install.translation_file.read_text(encoding="utf-8")
     assert "Button.Single=Solo contre soi" in txt      # clé traduite
     assert "Button.Multi=Multiplayer" in txt           # clé non couverte : officielle
     assert "Ghost" not in txt                          # clé inconnue : ignorée
     mgr.restore(fake_install.translation_file)
-    assert "Solo v Self" in fake_install.translation_file.read_text()
+    assert "Solo v Self" in fake_install.translation_file.read_text(encoding="utf-8")
 
 
 # ------------------------------------------------------------------ pack complet
@@ -164,12 +164,12 @@ def test_apply_pack_drag_and_drop_layout(mgr, fake_install, tmp_path):
     make_png(pack / "cards" / "OP01-001.png", 960, 1342)
     make_png(pack / "playmats" / "Blue.png", 1920, 1080)
     make_png(pack / "cardback.png")
-    (pack / "translation.txt").write_text("Button.Back=Retour\n")
+    (pack / "translation.txt").write_text("Button.Back=Retour\n", encoding="utf-8")
     rep = mgr.apply_pack(pack)
     assert rep["applied"] == {"cards": 1, "playmats": 1, "cardbacks": 1,
                               "backgrounds": 0, "translation": 1}
     assert rep["skipped"] == []
-    assert "Button.Back=Retour" in fake_install.translation_file.read_text()
+    assert "Button.Back=Retour" in fake_install.translation_file.read_text(encoding="utf-8")
     assert mgr.restore_all() == {"restored": 4, "failed": []}
 
 
@@ -240,7 +240,7 @@ def test_apply_pack_bad_playmat_does_not_abort_the_whole_pack(fake_install, tmp_
     make_png(pack / "cards" / "OP01-001.png", 960, 1342)          # valide
     # cas réel : un pack communautaire livre un tapis absent de CETTE installation
     make_png(pack / "playmats" / "PasDansLeJeu.png", 1920, 1080)
-    (pack / "translation.txt").write_text("Button.Back=Retour\n")  # valide, APRÈS le tapis
+    (pack / "translation.txt").write_text("Button.Back=Retour\n", encoding="utf-8")  # valide, APRÈS le tapis
 
     rep = mgr.apply_pack(pack)
 
