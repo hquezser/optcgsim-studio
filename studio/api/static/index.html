@@ -80,6 +80,41 @@
     border:2px solid var(--line);border-top-color:var(--accent2);
     animation:spin .7s linear infinite;margin-right:6px;vertical-align:-1px}
   @keyframes spin{to{transform:rotate(360deg)}}
+  /* --- sélecteur d'emplacements (DON, tapis, dos, fonds) --- */
+  .slotgroup{margin-bottom:16px}
+  .slotgroup h3{margin:0 0 8px;font-size:12px;color:var(--muted);font-weight:600;
+    text-transform:uppercase;letter-spacing:.6px}
+  .slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+  .slot{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px;
+    cursor:pointer;text-align:center;display:flex;flex-direction:column;gap:6px;
+    font:inherit;color:var(--txt);font-weight:400}
+  .slot:hover{border-color:var(--accent2)}
+  .slot .thumb{height:76px;display:flex;align-items:center;justify-content:center;
+    background:#0d1017;border-radius:6px;overflow:hidden}
+  .slot .thumb img{max-width:100%;max-height:100%;object-fit:contain;display:block}
+  .slot .nm{font-size:11px;line-height:1.25;word-break:break-word}
+  .slot .st{font-size:10px;color:var(--muted)}
+  .slot.on{border-color:var(--ok)} .slot.on .st{color:var(--ok)}
+  /* --- fenêtre de choix --- */
+  .modal{position:fixed;inset:0;background:#000b;display:flex;align-items:center;
+    justify-content:center;padding:20px;z-index:20}
+  .modal[hidden]{display:none}
+  .modal-box{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    width:min(920px,100%);max-height:86vh;display:flex;flex-direction:column}
+  .modal-head,.modal-foot{display:flex;align-items:center;gap:10px;padding:14px 18px}
+  .modal-head{border-bottom:1px solid var(--line)}
+  .modal-foot{border-top:1px solid var(--line)}
+  .modal-head input{flex:1;max-width:260px}
+  .pickgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px;
+    padding:16px 18px;overflow-y:auto}
+  .cand{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:7px;
+    cursor:pointer;display:flex;flex-direction:column;gap:6px;font:inherit;color:var(--txt);
+    font-weight:400;text-align:center}
+  .cand:hover{border-color:var(--accent)}
+  .cand .thumb{height:118px;display:flex;align-items:center;justify-content:center;
+    background:#0d1017;border-radius:6px;overflow:hidden}
+  .cand .thumb img{max-width:100%;max-height:100%;object-fit:contain;display:block}
+  .cand .nm{font-size:10.5px;line-height:1.25;word-break:break-word;color:var(--muted)}
   .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--panel2);
     border:1px solid var(--line);border-radius:10px;padding:11px 18px;box-shadow:0 8px 30px #0008;
     opacity:0;transition:.2s;pointer-events:none;max-width:80vw}
@@ -156,6 +191,34 @@
       </div>
       <div id="packs-themes"><div class="empty">Chargement…</div></div>
     </section>
+
+    <section>
+      <h2>Emplacements du jeu</h2>
+      <p class="sub">Le jeu n'a qu'<b>un seul</b> DON et un tapis par couleur — alors qu'un dépôt
+        d'alt-arts en propose des centaines. « Appliquer » ne peut poser que l'image qui porte
+        déjà le nom attendu ; <b>ici tu choisis laquelle</b>. Clique un emplacement pour voir
+        tout ce que ta bibliothèque propose pour lui. Réversible emplacement par emplacement.</p>
+      <div id="slots"><div class="empty">Chargement…</div></div>
+      <div class="hint">Un choix fait ici est <b>prioritaire</b> : ré-appliquer un pack ne
+        l'écrasera pas. Le sim doit être <b>redémarré</b> pour afficher un nouveau tapis ou
+        un nouveau DON (il les charge une fois au lancement).</div>
+    </section>
+  </div>
+
+  <div class="modal" id="picker" hidden role="dialog" aria-modal="true" aria-labelledby="picker-title">
+    <div class="modal-box">
+      <div class="modal-head">
+        <b id="picker-title"></b>
+        <input id="picker-filter" placeholder="filtrer par nom…" autocomplete="off">
+        <button class="mini ghost" id="picker-close">Fermer</button>
+      </div>
+      <div class="pickgrid" id="picker-grid"></div>
+      <div class="modal-foot">
+        <span class="hint" id="picker-count" style="margin:0;flex:1"></span>
+        <button class="mini ghost" id="picker-more" hidden>Afficher plus</button>
+        <button class="mini ghost" id="picker-reset">Restaurer l'original</button>
+      </div>
+    </div>
   </div>
 
   <div class="tab-panel" data-tab="cards" id="panel-cards" role="tabpanel" aria-labelledby="tabbtn-cards" hidden>
@@ -396,6 +459,135 @@ for(const sel of ['#packs-themes', '#packs-cards']){
   });
 }
 
+// ------------------------------------------------------------------ sélecteur d'emplacements
+// Le jeu n'a qu'UNE case par emplacement (un `Cards/Don/Don.png`, un tapis par couleur) là où
+// un dépôt d'alt-arts propose des centaines d'images. « Appliquer » ne pose que celle qui
+// porte déjà le nom attendu et écarte le reste en silence : ces écrans rendent le choix
+// explicite, image par image.
+const imgUrlSlot = id => '/api/image?slot=' + encodeURIComponent(id);
+const imgUrlCand = (pack, rel) =>
+  '/api/image?pack=' + encodeURIComponent(pack) + '&rel=' + encodeURIComponent(rel);
+
+function slotTile(s){
+  const etat = s.choice ? (s.choice.missing ? 'choisi (source absente)' : 'choisi')
+             : s.swapped ? 'modifié'
+             : s.candidates ? `${s.candidates} au choix` : 'aucun candidat';
+  return `<button class="slot${s.choice ? ' on' : ''}" type="button" data-slot="${esc(s.id)}"
+            title="${esc(s.rel)}">
+    <span class="thumb"><img decoding="async" alt="" src="${esc(imgUrlSlot(s.id))}"></span>
+    <span class="nm">${esc(s.label)}</span>
+    <span class="st">${esc(etat)}</span>
+  </button>`;
+}
+
+async function loadSlots(){
+  const list = await api('/slots');
+  const el = $('#slots');
+  if(!list.length){
+    el.innerHTML = '<div class="empty">Aucun emplacement remplaçable détecté dans cette '
+                 + 'installation.</div>';
+    return;
+  }
+  const groupes = {};
+  for(const s of list) (groupes[s.group] = groupes[s.group] || []).push(s);
+  el.innerHTML = Object.entries(groupes).map(([g, items]) => `
+    <div class="slotgroup"><h3>${esc(g)}</h3>
+      <div class="slots">${items.map(slotTile).join('')}</div></div>`).join('');
+}
+
+// Pagination de la grille : un dépôt de DON alternatifs fait 143 images de 1 à 2,3 Mo chacune.
+// Tout afficher d'un coup ferait décoder plus d'un Go de pixels au navigateur ; on en montre
+// une page à la fois, et le champ de filtre permet d'aller droit au but.
+//
+// C'est cette pagination — et NON `loading="lazy"` — qui borne le coût. Le chargement
+// paresseux a d'abord été essayé et donnait une grille DÉFINITIVEMENT VIDE dans un moteur où
+// l'IntersectionObserver ne se déclenche pas (fenêtre non composée) : les images n'étaient
+// jamais demandées, sans la moindre erreur. Un rendu qui dépend de la visibilité réelle de la
+// fenêtre échoue en silence ; on charge donc les images de la page courante sans condition.
+const PICK_PAGE = 24;
+let _picker = {slot: null, all: [], shown: 0};
+
+function filteredCandidates(){
+  const q = $('#picker-filter').value.trim().toLowerCase();
+  return q ? _picker.all.filter(c => c.name.toLowerCase().includes(q)) : _picker.all;
+}
+
+function renderCandidates(more){
+  const list = filteredCandidates();
+  _picker.shown = Math.min(list.length, (more ? _picker.shown : 0) + PICK_PAGE);
+  const grid = $('#picker-grid');
+  if(!list.length){
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1">Aucune image de ta
+      bibliothèque ne convient à cet emplacement — importe un pack qui en contient.</div>`;
+  }else{
+    grid.innerHTML = list.slice(0, _picker.shown).map(c => `
+      <button class="cand" type="button" data-pack="${esc(c.pack)}" data-rel="${esc(c.rel)}"
+              title="${esc(c.pack)} — ${esc(c.rel)}">
+        <span class="thumb"><img decoding="async" alt=""
+              src="${esc(imgUrlCand(c.pack, c.rel))}"></span>
+        <span class="nm">${esc(c.name)}</span>
+      </button>`).join('');
+  }
+  $('#picker-count').textContent = `${_picker.shown} / ${list.length} image(s)`;
+  $('#picker-more').hidden = _picker.shown >= list.length;
+  if(!more) grid.scrollTop = 0;
+}
+
+async function openPicker(slotId){
+  try{
+    const r = await api(`/slots/${encodeURIComponent(slotId)}/candidates`);
+    _picker = {slot: r.slot, label: r.label, all: r.candidates, shown: 0};
+    $('#picker-title').textContent = r.label;
+    $('#picker-filter').value = '';
+    $('#picker').hidden = false;
+    renderCandidates();
+    $('#picker-filter').focus();
+  }catch(e){ toast(e.message, 1); }
+}
+
+function closePicker(){
+  $('#picker').hidden = true;
+  $('#picker-grid').innerHTML = '';   // libère les images décodées de la page précédente
+}
+
+async function chooseCandidate(pack, rel){
+  try{
+    const r = await api(`/slots/${encodeURIComponent(_picker.slot)}/choose`, {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({pack, rel})});
+    closePicker();
+    toast(`« ${r.label} » : image posée (${r.targets.length} fichier(s)). `
+        + 'Redémarre le sim pour la voir.');
+    loadSlots(); loadStatus();
+  }catch(e){ toast(e.message, 1); }
+}
+
+async function resetSlot(){
+  try{
+    const r = await api(`/slots/${encodeURIComponent(_picker.slot)}/reset`, {method:'POST'});
+    closePicker();
+    toast(r.restored ? `« ${r.label} » : image d'origine restaurée.`
+                     : `« ${r.label} » portait déjà son image d'origine.`);
+    loadSlots(); loadStatus();
+  }catch(e){ toast(e.message, 1); }
+}
+
+$('#slots').addEventListener('click', e => {
+  const b = e.target.closest('.slot');
+  if(b) openPicker(b.dataset.slot);
+});
+$('#picker-grid').addEventListener('click', e => {
+  const b = e.target.closest('.cand');
+  if(b) chooseCandidate(b.dataset.pack, b.dataset.rel);
+});
+$('#picker-close').addEventListener('click', closePicker);
+$('#picker-reset').addEventListener('click', resetSlot);
+$('#picker-more').addEventListener('click', () => renderCandidates(true));
+$('#picker-filter').addEventListener('input', () => renderCandidates());
+$('#picker').addEventListener('click', e => { if(e.target === $('#picker')) closePicker(); });
+addEventListener('keydown', e => {
+  if(e.key === 'Escape' && !$('#picker').hidden) closePicker();
+});
+
 function toggleAllPacks(prefixe, checked){
   document.querySelectorAll('#packs-' + prefixe + ' .pack-select').forEach(c => c.checked = checked);
 }
@@ -416,7 +608,7 @@ async function removeSelectedPacks(prefixe){
   }
   toast(`${ok}/${names.length} pack(s) retiré(s) (${restored} fichier(s) restauré(s))`
        +(ok < names.length ? `, ${names.length - ok} échec(s).` : '.'));
-  loadStatus(); loadPacks();
+  loadStatus(); loadPacks(); loadSlots();
 }
 
 function deckBadge(source){
@@ -558,7 +750,8 @@ async function pollJob(jobId, label){
 function resumeJobs(){
   for(const j of getJobs()){
     pollJob(j.id, j.label)
-      .then(result => { toast(`« ${result.name || j.label} » terminé.`); loadPacks(); loadStatus(); })
+      .then(result => { toast(`« ${result.name || j.label} » terminé.`);
+                        loadPacks(); loadStatus(); loadSlots(); })
       .catch(e => toast(`${j.label} : ${e.message}`, 1));
   }
 }
@@ -627,7 +820,7 @@ async function addSource(){
     let msg = `« ${result.name} » : ${result.summary}`;
     toast(msg);
     $('#src').value=''; $('#src-name').value=''; $('#preview-hint').textContent='';
-    loadPacks();
+    loadPacks(); loadSlots();
   }catch(e){ toast(e.message,1); }
   finally{ btn.disabled = false; }
 }
@@ -737,7 +930,7 @@ async function importCollection(){
   }
   progress.textContent = '';
   toast(`Collection « ${_collection.name} » : ${ok}/${selected.length} pack(s) importé(s).`);
-  loadPacks();
+  loadPacks(); loadSlots();
 }
 
 async function saveToken(){
@@ -817,7 +1010,7 @@ async function uploadZip(file){
     if(!resp.ok) throw new Error(j.error);
     const result = await pollJob(j.job_id, `Analyse « ${file.name} »`);
     toast(`« ${result.name} » : ${result.summary}`);
-    loadPacks();
+    loadPacks(); loadSlots();
   }catch(e){ toast(e.message,1); }
 }
 
@@ -830,14 +1023,18 @@ async function apply(name, btn){
     let m = `${result.applied.length} fichiers appliqués`;
     if(result.translated) m += ' + traduction';
     if(result.collisions.length) m += ` · ⚠ ${result.collisions.length} collision(s)`;
-    toast(m+'. Ferme le sim pour voir le résultat.'); loadStatus(); loadPacks();
+    const gardes = result.reapplied_slots || [];
+    if(gardes.length) m += ` · ${gardes.length} choix d'emplacement conservé(s) : ${gardes.join(', ')}`;
+    toast(m+'. Redémarre le sim pour voir le résultat.');
+    loadStatus(); loadPacks(); loadSlots();
   }catch(e){ toast(e.message,1); }
   finally{ if(btn) btn.disabled = false; }
 }
 
 async function remove(name){
   try{ const r=await api(`/packs/${encodeURIComponent(name)}/remove`,{method:'POST'});
-    toast(`${r.restored} fichier(s) restauré(s) ; pack retiré.`); loadStatus(); loadPacks();
+    toast(`${r.restored} fichier(s) restauré(s) ; pack retiré.`);
+    loadStatus(); loadPacks(); loadSlots();
   }catch(e){ toast(e.message,1); }
 }
 
@@ -919,6 +1116,7 @@ function chargeOuAffiche(promesse, selecteurs, quoi){
 applyHash();
 loadStatus().catch(e=>$('#status').innerHTML=`<span style="color:var(--accent)">${esc(e.message)}</span>`);
 chargeOuAffiche(loadPacks(), ['#packs-themes', '#packs-cards'], 'la bibliothèque de packs');
+chargeOuAffiche(loadSlots(), '#slots', 'les emplacements du jeu');
 chargeOuAffiche(loadDecks(), '#decks', 'tes decks');
 loadTokenState();              // déjà silencieux par conception (section secondaire)
 autoloadDefaultCollection();   // P12 : auto-analyse la collection par défaut si définie

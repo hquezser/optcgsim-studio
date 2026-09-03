@@ -299,17 +299,18 @@ class AssetManager:
 
     @staticmethod
     def mirror_category(rel: str) -> str:
-        """Catégorie d'un chemin miroir (pour le filtre `--only`)."""
-        top = rel.replace("\\", "/").split("/")[0]
-        if top == "Cards":
-            return "cards"
-        if top == "Playmats":
-            return "playmats"
-        if top == "CardBacks":
-            return "cardbacks"
-        if rel in ("background.jpg", "deckeditbackground.jpg"):
-            return "backgrounds"
-        return "other"
+        """Catégorie d'un chemin miroir (pour le filtre `--only`).
+
+        DÉLÈGUE à `packlib.classify_rel`, la fonction qui classe déjà à l'IMPORT. Les deux
+        listes avaient divergé : `classify_rel` connaît la catégorie « don » (`Cards/Don/…`),
+        pas cette fonction, qui rangeait le DON dans « cards ». Conséquence, cocher « don »
+        à l'import fonctionnait mais filtrer sur « don » à l'application ne rendait jamais
+        rien — le DON étant classé « cards », il passait avec les cartes et disparaissait
+        avec elles. Un même chemin ne peut pas avoir deux catégories selon l'étape : une
+        seule fonction décide, et l'écart ne peut plus se rouvrir.
+        """
+        from . import packlib      # import local : packlib ne dépend pas du manager (pas de cycle)
+        return packlib.classify_rel(rel)[0]
 
     def apply_mirror(self, pack_dir: Path, origin: str | None = None,
                      dry_run: bool = False, only: set[str] | None = None,

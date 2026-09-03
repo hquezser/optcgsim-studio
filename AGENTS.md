@@ -59,6 +59,12 @@ tourne sur `http.server` de la stdlib, pas de Node/npm/build).
       voir mémoire `studio-ui-vs-maintainer-boundary`)
     - `collections.py` — **P10** : format `collection.json` (variantes/compléments) pour
       importer plusieurs dépôts liés en un geste via l'UI
+    - `slots.py` — **sélecteur d'emplacements** : le jeu n'a qu'UNE case par emplacement
+      (un `Cards/Don/Don.png`, un tapis par couleur) là où un dépôt d'alt-arts en propose des
+      centaines ; `apply_mirror` n'écrivant jamais un fichier inconnu du jeu, c'était le nom
+      de fichier qui tranchait. Ce module nomme les emplacements, liste les candidats de la
+      bibliothèque et persiste le choix (`<state>/slots.json`) pour qu'une ré-application de
+      pack ne l'écrase pas en silence. N'écrit jamais lui-même : passe par `AssetManager`.
     - `sourcefetch.py` — fetch sélectif GitHub (Tree API + CDN raw.githubusercontent.com)
     - `cardmeta.py` — table id→type de carte (Leader/Character/Event/Stage), vendorisée
   - `decks/` — **pilier 2** : import universel de decklists (`importer.py`, `deckpack.py`)

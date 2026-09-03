@@ -11,6 +11,11 @@ Endpoints (préfixe /api) :
     POST /packs/upload  (corps=zip, ?name=) -> normalise un zip uploadé (drag&drop)
     POST /packs/<name>/apply {only?, dry_run?}
     POST /packs/<name>/remove
+    GET  /slots                     -> emplacements du jeu (DON, tapis, dos, fonds) + état
+    GET  /slots/<id>/candidates     -> images de la bibliothèque éligibles à cet emplacement
+    POST /slots/<id>/choose {pack, rel} -> pose CETTE image-là dans l'emplacement
+    POST /slots/<id>/reset          -> restaure l'image d'origine du jeu
+    GET  /image?slot=<id> | ?pack=<nom>&rel=<chemin> -> octets d'une image (vignettes de l'UI)
     POST /packs/update {name?}      /  POST /packs/reapply
     GET  /packs/<name>/coverage     -> couverture par deck (le crochet d'adoption)
     GET  /decks                     -> decks en base (avec provenance : source)
@@ -38,7 +43,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from ..assets import cardmeta, collections, packlib, sourcefetch
+from ..assets import cardmeta, collections, packlib, slots, sourcefetch
 from ..assets.manager import AssetError, AssetManager
 from ..config import Config
 from ..decks import importer, persist
@@ -157,6 +162,84 @@ class StudioService:
             })
         rows.sort(key=lambda r: r["pct"], reverse=True)
         return {"pack": name, "cards_in_pack": len(pack_cards), "decks": rows}
+
+    # ------------------------------------------------------------ emplacements (sélecteur)
+    # Un pack ne peut que re-skinner de l'existant : les N images qu'il propose pour UN
+    # emplacement unique (143 DON pour le seul `Cards/Don/Don.png`) étaient jusqu'ici
+    # départagées par leur seul NOM DE FICHIER, les autres écartées en silence. Ces routes
+    # rendent le choix explicite. Voir `studio/assets/slots.py`.
+    def slots(self) -> list[dict]:
+        return slots.describe(self.install, self.mgr, self.lib_dir)
+
+    def slot_candidates(self, slot_id: str) -> dict:
+        slot = slots.find_slot(self.install, slot_id)
+        return {"slot": slot.id, "kind": slot.kind, "label": slot.label,
+                "candidates": slots.candidates(self.lib_dir, slot.kind)}
+
+    def choose_slot(self, slot_id: str, pack: str, rel: str) -> dict:
+        slot = slots.find_slot(self.install, slot_id)
+        image = slots.resolve_candidate(self.lib_dir, pack, rel)
+        done = slots.apply_choice(self.mgr, slot, image)
+        slots.SlotChoices(self.mgr.state_dir).set(slot.id, image, pack, rel)
+        return {"slot": slot.id, "label": slot.label, "pack": pack, "rel": rel,
+                "targets": [str(p) for p in done]}
+
+    def reset_slot(self, slot_id: str) -> dict:
+        """Restaure l'image d'origine et OUBLIE le choix.
+
+        L'ordre compte : on efface le choix même si la restauration échoue faute de backup
+        (cas d'un emplacement jamais swappé — l'utilisateur clique « Restaurer » sur un slot
+        intact). Sinon un choix fantôme resterait ré-appliqué à chaque `apply`.
+        """
+        slot = slots.find_slot(self.install, slot_id)
+        target = self.install.streaming_assets / slot.rel
+        restored = False
+        try:
+            self.mgr.restore(target)
+            restored = True
+        except AssetError:
+            pass                      # aucun backup : le fichier est déjà celui d'origine
+        slots.SlotChoices(self.mgr.state_dir).clear(slot.id)
+        return {"slot": slot.id, "label": slot.label, "restored": restored}
+
+    def slot_image(self, slot_id: str) -> Path:
+        """Fichier actuellement en place dans le jeu pour cet emplacement."""
+        slot = slots.find_slot(self.install, slot_id)
+        p = self.install.streaming_assets / slot.rel
+        if not p.is_file():
+            raise KeyError(slot_id)
+        return p
+
+    def candidate_image(self, pack: str, rel: str) -> Path:
+        return slots.resolve_candidate(self.lib_dir, pack, rel)
+
+    def _reapply_choices(self, applied_rels: list[str]) -> list[str]:
+        """Ré-impose les choix d'emplacement écrasés par l'application d'un pack.
+
+        Sans ceci, « Appliquer » reposerait le `Don.png` du pack par-dessus le DON choisi
+        à la main, en silence — la panne exacte que le sélecteur existe pour corriger. On ne
+        ré-applique QUE les emplacements que ce pack vient de toucher : ré-écrire les autres
+        serait du travail (et des écritures dans le bundle signé) pour rien.
+        """
+        touched = set(applied_rels)
+        store = slots.SlotChoices(self.mgr.state_dir)
+        choices = store.all()
+        if not choices:
+            return []
+        redone = []
+        for slot in slots.list_slots(self.install):
+            choice = choices.get(slot.id)
+            if choice is None or slot.rel not in touched:
+                continue
+            image = Path(choice["path"])
+            if not image.is_file():
+                continue              # source disparue (pack retiré) : le swap en place reste
+            try:
+                slots.apply_choice(self.mgr, slot, image)
+                redone.append(slot.label)
+            except AssetError:
+                continue              # image devenue invalide : le pack garde la main
+        return redone
 
     # ------------------------------------------------------------ écriture (jobs de fond)
     # Le téléchargement + la normalisation d'un pack, ou l'application au jeu, peuvent
@@ -315,9 +398,10 @@ class StudioService:
         if txt.exists() and (only is None or "translation" in only) and not dry_run:
             self.mgr.apply_translation(txt, origin=origin)
             translated = True
+        reapplied = [] if dry_run else self._reapply_choices(rep["applied"])
         return {"applied": rep["applied"], "collisions": rep["collisions"],
                 "ignored": len(rep["ignored"]), "translated": translated,
-                "dry_run": dry_run}
+                "reapplied_slots": reapplied, "dry_run": dry_run}
 
     def start_apply_job(self, name: str, only: set[str] | None = None,
                         dry_run: bool = False) -> str:
@@ -486,8 +570,57 @@ def make_handler(svc: StudioService):
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                # Le client est parti avant la fin (onglet fermé, navigation, image sortie du
+                # champ pendant un défilement en chargement paresseux). C'est le cours NORMAL
+                # des choses, surtout avec la grille de vignettes du sélecteur : sans ce
+                # rattrapage, chaque abandon imprimait une trace Python de 40 lignes et
+                # noyait les vraies erreurs du serveur.
+                pass
+
+        # -------- images (vignettes du sélecteur)
+        _IMG_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+
+        def _send_image(self, svc, qs):
+            """Sert une image du jeu (`?slot=`) ou de la bibliothèque (`?pack=`&`rel=`).
+
+            Envoi PAR MORCEAUX : la grille de candidats affiche des centaines d'images de
+            plusieurs Mo, jamais chargées entières en mémoire côté serveur. Validation par
+            `ETag` (taille + mtime) : le navigateur ne retélécharge pas une vignette déjà vue,
+            mais voit immédiatement un emplacement dont l'image vient de changer — un cache
+            par durée servirait l'ancienne image juste après un choix.
+            """
+            slot_id = (qs.get("slot") or [None])[0]
+            if slot_id:
+                path = svc.slot_image(slot_id)
+            else:
+                pack, rel = (qs.get("pack") or [None])[0], (qs.get("rel") or [None])[0]
+                if not pack or not rel:
+                    raise _RequeteInvalide("préciser « slot », ou « pack » et « rel »")
+                path = svc.candidate_image(pack, rel)
+            st = path.stat()
+            etag = f'"{st.st_size:x}-{st.st_mtime_ns:x}"'
+            if self.headers.get("If-None-Match") == etag:
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type",
+                             self._IMG_TYPES.get(path.suffix.lower(), "application/octet-stream"))
+            self.send_header("Content-Length", str(st.st_size))
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "private, no-cache")
+            try:
+                self.end_headers()
+                with path.open("rb") as f:
+                    while morceau := f.read(_CHUNK):
+                        self.wfile.write(morceau)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
         def _body_json(self) -> dict:
             n = int(self.headers.get("Content-Length", 0))
@@ -577,6 +710,13 @@ def make_handler(svc: StudioService):
                     return self._send(200, svc.decks())
                 if path == "/api/config":
                     return self._send(200, svc.get_config())
+                if path == "/api/slots":
+                    return self._send(200, svc.slots())
+                if path == "/api/image":
+                    return self._send_image(svc, qs)
+                m = re.match(r"^/api/slots/([^/]+)/candidates$", path)
+                if m:
+                    return self._send(200, svc.slot_candidates(_dec(m.group(1))))
                 m = re.match(r"^/api/packs/([^/]+)/coverage$", path)
                 if m:
                     return self._send(200, svc.coverage(_dec(m.group(1))))
@@ -645,6 +785,14 @@ def make_handler(svc: StudioService):
                 m = re.match(r"^/api/packs/([^/]+)/remove$", path)
                 if m:
                     return self._send(200, svc.remove(_dec(m.group(1))))
+                m = re.match(r"^/api/slots/([^/]+)/choose$", path)
+                if m:
+                    b = self._body_json()
+                    return self._send(200, svc.choose_slot(
+                        _dec(m.group(1)), _champ(b, "pack"), _champ(b, "rel")))
+                m = re.match(r"^/api/slots/([^/]+)/reset$", path)
+                if m:
+                    return self._send(200, svc.reset_slot(_dec(m.group(1))))
                 if path == "/api/decks/import":
                     b = self._body_json()
                     return self._send(200, svc.import_deck(
