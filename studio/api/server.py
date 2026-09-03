@@ -214,32 +214,8 @@ class StudioService:
         return slots.resolve_candidate(self.lib_dir, pack, rel)
 
     def _reapply_choices(self, applied_rels: list[str]) -> list[str]:
-        """Ré-impose les choix d'emplacement écrasés par l'application d'un pack.
-
-        Sans ceci, « Appliquer » reposerait le `Don.png` du pack par-dessus le DON choisi
-        à la main, en silence — la panne exacte que le sélecteur existe pour corriger. On ne
-        ré-applique QUE les emplacements que ce pack vient de toucher : ré-écrire les autres
-        serait du travail (et des écritures dans le bundle signé) pour rien.
-        """
-        touched = set(applied_rels)
-        store = slots.SlotChoices(self.mgr.state_dir)
-        choices = store.all()
-        if not choices:
-            return []
-        redone = []
-        for slot in slots.list_slots(self.install):
-            choice = choices.get(slot.id)
-            if choice is None or slot.rel not in touched:
-                continue
-            image = Path(choice["path"])
-            if not image.is_file():
-                continue              # source disparue (pack retiré) : le swap en place reste
-            try:
-                slots.apply_choice(self.mgr, slot, image)
-                redone.append(slot.label)
-            except AssetError:
-                continue              # image devenue invalide : le pack garde la main
-        return redone
+        """Délègue à `slots.reapply_choices` : la règle doit être la même qu'en CLI."""
+        return slots.reapply_choices(self.install, self.mgr, applied_rels)
 
     # ------------------------------------------------------------ écriture (jobs de fond)
     # Le téléchargement + la normalisation d'un pack, ou l'application au jeu, peuvent

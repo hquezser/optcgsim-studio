@@ -327,3 +327,85 @@ def test_a_pack_containing_only_cards_keeps_its_mirror_root(install, tmp_path):
                               work_dir=tmp_path / "w")
     assert rep.unclassified == []
     assert "Cards/Don/Don.png" in rep.files
+
+
+# ── L'invariant vaut sur TOUS les chemins de code, pas seulement dans l'interface web ──────
+
+def test_un_choix_survit_a_une_application_de_pack(install, mgr, lib):
+    """`reapply_choices` repose le choix par-dessus le pack qui vient de l'écraser.
+
+    C'est la raison d'être du module : sans ça, « appliquer » remet le `Don.png` du pack
+    par-dessus le DON choisi à la main, en silence.
+    """
+    choisi = lib / "altarts" / "Cards" / "Don" / "KaidoDon.png"
+    slot = slots.find_slot(install, "don")
+    slots.apply_choice(mgr, slot, choisi)
+    slots.SlotChoices(mgr.state_dir).set("don", choisi, "altarts", "Cards/Don/KaidoDon.png")
+    cible = install.cards_dir / "Don" / "Don.png"
+    assert cible.read_bytes() == choisi.read_bytes()
+
+    # Un pack repose SON Don.png par-dessus.
+    pack = lib / "autre"
+    intrus = make_png(pack / "Cards" / "Don" / "Don.png", couleur=99)
+    rep = mgr.apply_mirror(pack, origin="pack:autre")
+    assert cible.read_bytes() == intrus.read_bytes(), "le pack devrait avoir écrasé le choix"
+
+    redone = slots.reapply_choices(install, mgr, rep["applied"])
+    assert redone == [slot.label]
+    assert cible.read_bytes() == choisi.read_bytes(), "le choix n'a pas été réimposé"
+
+
+def test_le_cli_reimpose_les_choix_comme_le_serveur(install, mgr, lib, monkeypatch, capsys):
+    """Le défaut trouvé en relisant ce lot : `_reapply_choices` vivait dans le SERVEUR, et
+    les quatre points d'application du CLI ne l'appelaient pas. Le sélecteur tenait donc
+    dans l'interface web et pas en ligne de commande — même famille de défaut que la
+    divergence `classify_rel` que ce même lot corrige, où l'import et l'application
+    classaient les chemins avec deux fonctions qui ne disaient plus la même chose.
+    """
+    from studio import cli
+
+    choisi = lib / "altarts" / "Cards" / "Don" / "ZoroDon.png"
+    slots.apply_choice(mgr, slots.find_slot(install, "don"), choisi)
+    slots.SlotChoices(mgr.state_dir).set("don", choisi, "altarts", "Cards/Don/ZoroDon.png")
+
+    pack = lib / "encore"
+    make_png(pack / "Cards" / "Don" / "Don.png", couleur=77)
+    rep = mgr.apply_mirror(pack, origin="pack:encore")
+    cible = install.cards_dir / "Don" / "Don.png"
+    assert cible.read_bytes() != choisi.read_bytes()
+
+    cli._reimposer_choix(mgr, install, rep["applied"])
+    assert cible.read_bytes() == choisi.read_bytes()
+    assert "réimposés" in capsys.readouterr().out
+
+
+def test_sans_choix_le_cli_ne_dit_rien(install, mgr, lib, capsys):
+    """Une ligne à chaque application n'informerait plus de rien : on ne parle que si ça a
+    effectivement joué.
+    """
+    from studio import cli
+
+    pack = lib / "vierge"
+    make_png(pack / "Cards" / "Don" / "Don.png", couleur=5)
+    rep = mgr.apply_mirror(pack, origin="pack:vierge")
+    cli._reimposer_choix(mgr, install, rep["applied"])
+    assert "réimposés" not in capsys.readouterr().out
+
+
+def test_tous_les_points_d_application_du_cli_reimposent_les_choix():
+    """Garde-fou structurel : c'est l'OUBLI d'un chemin qui a créé le défaut, pas sa logique.
+
+    Chaque appel à `apply_mirror` dans le CLI doit être accompagné d'une réimposition. Un
+    test de comportement ne peut pas couvrir un cinquième point d'application ajouté plus
+    tard ; ce contrôle-là, oui.
+    """
+    import re
+
+    src = (Path(__file__).resolve().parent.parent / "studio" / "cli.py").read_text(
+        encoding="utf-8")
+    fonctions = re.split(r"\ndef ", src)
+    manquants = [f.split("(")[0] for f in fonctions
+                 if "apply_mirror(" in f and "_reimposer_choix(" not in f]
+    assert not manquants, (
+        f"ces fonctions appliquent un pack sans réimposer les choix d'emplacement : "
+        f"{manquants}")

@@ -117,6 +117,14 @@ fait pour ingérer des fichiers venant d'inconnus, et les traitait avec trop de 
 
 ### Ajouté
 
+- **Un choix d'emplacement n'était réimposé que depuis l'interface web.** La règle « un choix
+  délibéré survit à une application de pack » — raison d'être du sélecteur — vivait dans le
+  serveur, et les quatre points d'application du CLI ne l'appelaient pas : `studio packs apply`
+  reposait donc le `Don.png` du pack par-dessus le DON choisi à la main, en silence. Même
+  famille de défaut que la divergence de classification ci-dessus : une règle à deux endroits
+  finit par n'être vraie qu'à un seul. Elle est désormais dans `slots.py`, appelée par les deux,
+  et un test structurel échoue si un nouveau point d'application oublie de l'appeler.
+
 - **Sélecteur d'emplacements** (`studio assets slots` / onglet *Thèmes* de l'interface). Le jeu
   n'a qu'**une** case par emplacement — un seul `Cards/Don/Don.png`, un tapis par couleur — là
   où un dépôt d'alt-arts en propose des centaines. Comme un pack ne peut que re-skinner de

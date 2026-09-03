@@ -184,9 +184,30 @@ def cmd_assets_apply_pack(args) -> int:
     return 1 if rep["skipped"] else 0
 
 
+def _reimposer_choix(mgr, install, applied) -> None:
+    """Ré-impose les choix d'emplacement qu'un pack vient d'écraser, et le DIT.
+
+    Le silence est le défaut d'origine : un choix écrasé sans un mot est indiscernable d'un
+    choix respecté. On l'annonce donc, même quand il n'y a rien eu à refaire — non, justement
+    pas : une ligne à chaque application n'informerait plus. Seulement quand ça a joué.
+    """
+    if not applied:
+        return
+    # Import local, comme les autres commandes de slots : `slots` tire `manager` et
+    # `packlib`, et le CLI doit rester démarrable même sur une installation incomplète.
+    from .assets import slots as slotlib
+
+    redone = slotlib.reapply_choices(install, mgr, applied)
+    if redone:
+        print(f"  choix d'emplacement réimposés par-dessus le pack : {', '.join(redone)}")
+
+
 def cmd_assets_apply_mirror(args) -> int:
-    mgr = AssetManager(_install(args))
+    inst = _install(args)
+    mgr = AssetManager(inst)
     rep = mgr.apply_mirror(Path(args.pack), dry_run=args.dry_run, on_progress=_console_progress)
+    if not args.dry_run:
+        _reimposer_choix(mgr, inst, rep["applied"])
     verb = "seraient remplacés" if args.dry_run else "remplacés"
     print(f"Racine détectée : {rep['root']}")
     print(f"{len(rep['applied'])} fichiers {verb}.")
@@ -445,10 +466,13 @@ def cmd_packs_apply(args) -> int:
     if not pack_dir.exists():
         raise SystemExit(f"Dossier du pack introuvable : {pack_dir}")
     only = set(args.only.split(",")) if args.only else None
-    mgr = AssetManager(_install(args))
+    inst = _install(args)
+    mgr = AssetManager(inst)
     origin = f"pack:{p['name']}"
     rep = mgr.apply_mirror(pack_dir, origin=origin, dry_run=args.dry_run, only=only,
                            on_progress=_console_progress)
+    if not args.dry_run:
+        _reimposer_choix(mgr, inst, rep["applied"])
     verb = "seraient appliqués" if args.dry_run else "appliqués"
     print(f"{len(rep['applied'])} fichiers {verb}"
           + (f" (filtre : {args.only})" if only else "") + ".")
@@ -473,7 +497,7 @@ def cmd_packs_apply(args) -> int:
     return 0
 
 
-def _reapply_if_active(mgr, name: str, pack_dir: Path) -> int:
+def _reapply_if_active(mgr, install, name: str, pack_dir: Path) -> int:
     """Ré-applique un pack s'il a des swaps actifs (après update). Renvoie le nb appliqué."""
     origin = f"pack:{name}"
     if any(s.get("source") == origin for s in mgr.status()):
@@ -481,6 +505,7 @@ def _reapply_if_active(mgr, name: str, pack_dir: Path) -> int:
         txt = pack_dir / "TRANSLATION.txt"
         if txt.exists():
             mgr.apply_translation(txt, origin=origin)
+        _reimposer_choix(mgr, install, rep["applied"])
         return len(rep["applied"])
     return 0
 
@@ -522,7 +547,7 @@ def cmd_packs_update(args) -> int:
                 print(f"« {p['name']} » : déjà à jour.")
                 continue
             print(f"« {p['name']} » : {len(changed)} modifié(s), {len(removed)} retiré(s).")
-            n = _reapply_if_active(mgr, p["name"], pack_dir)
+            n = _reapply_if_active(mgr, inst, p["name"], pack_dir)
             if n:
                 print(f"  ré-appliqué ({n} fichiers) — pack actif.")
     return 0
@@ -550,6 +575,7 @@ def cmd_packs_reapply(args) -> int:
             txt = Path(p["local_path"]) / "TRANSLATION.txt"
             if txt.exists():
                 mgr.apply_translation(txt, origin=origin)
+            _reimposer_choix(mgr, inst, rep["applied"])
             total += len(rep["applied"])
             print(f"« {name} » : {len(rep['applied'])} fichiers ré-appliqués.")
     print(f"{total} fichier(s) ré-appliqué(s). Ferme le sim avant/pendant.")
