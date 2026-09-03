@@ -222,6 +222,44 @@ def apply_choice(mgr: AssetManager, slot: Slot, image: Path) -> list[Path]:
     raise AssetError(f"Emplacement inconnu : {slot.id}")
 
 
+def reapply_choices(install: GameInstall, mgr: AssetManager,
+                    applied_rels: list[str]) -> list[str]:
+    """Ré-impose les choix d'emplacement qu'une application de pack vient d'écraser.
+
+    Sans ceci, « appliquer » repose le `Don.png` du pack par-dessus le DON choisi à la main,
+    EN SILENCE — la panne exacte que ce module existe pour corriger. L'invariant est donc :
+    un choix délibéré survit à toute application de pack, quel que soit le chemin de code.
+
+    Cette fonction vit ici et non dans le serveur précisément pour cette raison. Elle y a
+    d'abord été écrite, et le CLI — quatre points d'application — ne l'appelait pas : le
+    sélecteur tenait dans l'interface web et pas en ligne de commande. C'est la même famille
+    de défaut que la divergence `classify_rel` corrigée juste à côté, où l'import et
+    l'application classaient les chemins avec deux fonctions qui ne disaient plus la même
+    chose. Une règle, un seul endroit.
+
+    On ne ré-applique QUE les emplacements que ce pack vient de toucher : réécrire les autres
+    serait des écritures dans le bundle du jeu pour rien.
+    """
+    touched = set(applied_rels)
+    choices = SlotChoices(mgr.state_dir).all()
+    if not choices:
+        return []
+    redone: list[str] = []
+    for slot in list_slots(install):
+        choice = choices.get(slot.id)
+        if choice is None or slot.rel not in touched:
+            continue
+        image = Path(choice["path"])
+        if not image.is_file():
+            continue              # source disparue (pack retiré) : le swap en place reste
+        try:
+            apply_choice(mgr, slot, image)
+            redone.append(slot.label)
+        except AssetError:
+            continue              # image devenue invalide : le pack garde la main
+    return redone
+
+
 def describe(install: GameInstall, mgr: AssetManager, lib_dir: Path) -> list[dict]:
     """État complet des emplacements, prêt pour l'UI (JSON)."""
     counts = candidate_counts(lib_dir)
