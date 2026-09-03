@@ -7,3 +7,4 @@ dist/
 node_modules/
 .studio-backups/
 .claude/
+.DS_Store
