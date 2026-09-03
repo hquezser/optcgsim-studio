@@ -779,3 +779,107 @@ def test_internal_failure_is_500_on_get_like_on_post(server, svc, monkeypatch):
         raise AssertionError("aurait dû échouer")
     except urllib.error.HTTPError as e:
         assert e.code == 500, f"une panne interne doit être 500, reçu {e.code}"
+
+
+# ------------------------------------------------------ vignettes de cartes locales (P20)
+# Cette route sert des FICHIERS d'après un morceau d'URL : c'est la classe de faille la plus
+# classique du lot, donc elle est testée en premier et par l'attaque, pas par le cas heureux.
+def _img(base, path):
+    with urllib.request.urlopen(base + path) as r:
+        return r.status, r.read(), dict(r.headers)
+
+
+@pytest.mark.parametrize("hostile", [
+    "../../../../etc/passwd",
+    "..%2F..%2F..%2Fetc%2Fpasswd",
+    "OP01-001%2F..%2F..%2F..%2Fetc%2Fpasswd",
+    "OP01-001.png",                 # pas un id : le suffixe est ajouté par le serveur
+    "OP01-001/../OP01-002",
+    "",
+])
+def test_card_image_refuse_tout_ce_qui_n_est_pas_un_id(server, hostile):
+    """Aucun de ces chemins ne doit sortir des dossiers d'images — ni servir de fichier.
+
+    On accepte 400 (id refusé) comme 404 (route non reconnue) : ce qui compte est qu'aucune
+    réponse 200 ne sorte, et qu'aucun octet de `/etc/passwd` ne traverse le serveur.
+    """
+    try:
+        status, body, _ = _img(server, f"/api/cards/{hostile}/image")
+        raise AssertionError(f"servi en {status} : {body[:40]!r}")
+    except urllib.error.HTTPError as e:
+        assert e.code in (400, 404), f"code inattendu {e.code}"
+        assert b"root:" not in e.read()
+
+
+def test_card_image_sert_la_miniature_quand_elle_existe(server, svc):
+    """`thumb` doit préférer `_small.jpg` : c'est la vignette du deck builder, déjà
+    dimensionnée pour ça, et bien plus légère que le PNG plein format."""
+    petite = svc.install.cards_dir / "OP01" / "OP01-001_small.jpg"
+    petite.write_bytes(b"\xff\xd8\xff\xe0jpeg-miniature")
+    status, body, headers = _img(server, "/api/cards/OP01-001/image")
+    assert status == 200
+    assert body == petite.read_bytes()
+    assert headers["Content-Type"] == "image/jpeg"
+
+
+def test_card_image_retombe_sur_le_png_sans_miniature(server, svc):
+    """Toutes les cartes n'ont pas de `_small.jpg` : la vue ne doit pas se trouer pour ça."""
+    status, body, headers = _img(server, "/api/cards/OP01-001/image")
+    assert status == 200 and headers["Content-Type"] == "image/png"
+    assert body == (svc.install.cards_dir / "OP01" / "OP01-001.png").read_bytes()
+
+
+def test_card_image_full_prefere_le_plein_format(server, svc):
+    (svc.install.cards_dir / "OP01" / "OP01-001_small.jpg").write_bytes(b"\xff\xd8mini")
+    status, body, headers = _img(server, "/api/cards/OP01-001/image?size=full")
+    assert status == 200 and headers["Content-Type"] == "image/png"
+    assert body == (svc.install.cards_dir / "OP01" / "OP01-001.png").read_bytes()
+
+
+def test_card_image_taille_inconnue_est_400(server):
+    try:
+        _img(server, "/api/cards/OP01-001/image?size=enorme")
+        raise AssertionError("une taille inconnue doit être refusée")
+    except urllib.error.HTTPError as e:
+        assert e.code == 400 and "thumb" in json.loads(e.read())["error"]
+
+
+def test_card_image_absente_du_jeu_est_404(server):
+    """Un id valide dont le jeu n'a pas l'image : 404, pas 500. Le cas est NORMAL (sets
+    récents, cartes jamais téléchargées) et l'UI doit pouvoir le distinguer d'une panne."""
+    try:
+        _img(server, "/api/cards/OP99-123/image")
+        raise AssertionError("aurait dû être introuvable")
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
+
+
+def test_card_image_revalide_et_suit_l_application_d_un_pack(server, svc):
+    """L'empreinte doit changer quand le FICHIER change — sinon une vignette en cache
+    montrerait l'ancien art après « Appliquer », soit l'inverse du service rendu."""
+    _, _, h1 = _img(server, "/api/cards/OP01-001/image")
+    etag = h1["ETag"]
+    assert h1["Cache-Control"] == "no-cache"
+
+    # `urllib` lève sur tout ce qui n'est pas 2xx, 304 compris — c'est bien la réponse
+    # attendue ici, pas un échec.
+    req = urllib.request.Request(server + "/api/cards/OP01-001/image",
+                                 headers={"If-None-Match": etag})
+    try:
+        with urllib.request.urlopen(req) as r:
+            raise AssertionError(f"empreinte identique : attendu 304, reçu {r.status}")
+    except urllib.error.HTTPError as e:
+        assert e.code == 304, f"attendu 304, reçu {e.code}"
+        assert e.read() == b"", "un 304 ne doit pas renvoyer de corps"
+
+    # Un pack appliqué REMPLACE le fichier : nouvelle empreinte, donc rechargement.
+    make_png(svc.install.cards_dir / "OP01" / "OP01-001.png", 960, 1342)
+    _, _, h2 = _img(server, "/api/cards/OP01-001/image")
+    assert h2["ETag"] != etag, "l'empreinte n'a pas suivi le remplacement du fichier"
+
+
+def test_card_image_promo_est_un_id_valide(server, svc):
+    """`P-001` : le gabarit de l'écosystème couvre les promos, dont le code de set est `P`."""
+    make_png(svc.install.cards_dir / "P" / "P-001.png")
+    status, _, headers = _img(server, "/api/cards/P-001/image")
+    assert status == 200 and headers["Content-Type"] == "image/png"

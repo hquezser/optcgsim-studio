@@ -64,8 +64,29 @@
   .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2))}
   .covrow{margin-bottom:10px} .covrow .l{display:flex;justify-content:space-between;font-size:12px}
   .covrow .l b{color:var(--txt)} .covrow .l span{color:var(--muted)}
-  .deck{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .deck{padding:9px 0;border-bottom:1px solid var(--line)}
+  .deck .top{display:flex;align-items:center;gap:10px}
   .deck:last-child{border:0} .deck .l{font-weight:600} .deck .adv{color:var(--muted);font-size:12px}
+  /* Vignettes de cartes — images LOCALES de l'installation, servies par /api/cards/<id>/image.
+     `loading="lazy"` partout : un deck déplié en pose 51, et la grille n'est construite qu'au
+     clic, donc rien ne part sur le réseau local avant que l'utilisateur ne regarde. */
+  .leader{width:32px;height:45px;object-fit:cover;border-radius:4px;background:var(--panel2);
+    flex:none}
+  .cards{margin-top:12px;border-top:1px solid var(--line);padding-top:12px;display:none}
+  .cards.show{display:block}
+  .cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:10px}
+  .ct{font-size:11px;color:var(--muted);text-align:center}
+  .ct img{width:100%;aspect-ratio:480/671;object-fit:cover;border-radius:6px;
+    background:var(--panel2);display:block}
+  .ct .q{color:var(--txt);font-weight:600}
+  .ct.lead img{outline:2px solid var(--accent2);outline-offset:-2px}
+  /* Carte absente de l'install (set récent jamais téléchargé par le sim) : l'image 404. On
+     montre un cadre vide et l'ID reste lisible — une absence doit se lire comme une absence,
+     pas comme une vignette cassée. */
+  .ct.no-art img{display:none}
+  .ct.no-art .ph{display:block;aspect-ratio:480/671;border:1px dashed var(--line);
+    border-radius:6px}
+  .ct .ph{display:none}
   .empty{color:var(--muted);text-align:center;padding:20px;font-size:13px}
   #activity{display:none;background:var(--panel);border:1px solid var(--accent2);
     border-radius:var(--radius);padding:16px 22px}
@@ -628,22 +649,73 @@ async function loadDecks(){
     $('#decks-select-all').checked = false;
     return;
   }
+  _decks = {};
   el.innerHTML = decks.map(d=>{
+    _decks[d.id] = d;
     const n = Object.values(d.cards).reduce((a,b)=>a+b,0);
     return `<div class="deck" data-id="${esc(d.id)}">
-      <input type="checkbox" class="deck-select" value="${esc(d.id)}" style="width:auto">
-      <span class="l">${esc(d.name)}</span>
-      <span class="adv">${esc(d.leader)} · ${n} cartes${d.tags.length?' · '+esc(d.tags.join(', ')):''}</span>
-      ${deckBadge(d.source)}
-      <button class="mini ghost" style="margin-left:auto" data-act="remove-deck">Retirer</button>
+      <div class="top">
+        <input type="checkbox" class="deck-select" value="${esc(d.id)}" style="width:auto">
+        ${cardImg(d.leader, 'leader')}
+        <span class="l">${esc(d.name)}</span>
+        <span class="adv">${esc(d.leader)} · ${n} cartes${d.tags.length?' · '+esc(d.tags.join(', ')):''}</span>
+        ${deckBadge(d.source)}
+        <button class="mini ghost" style="margin-left:auto" data-act="deck-cards">Cartes</button>
+        <button class="mini ghost" data-act="remove-deck">Retirer</button>
+      </div>
+      <div class="cards"></div>
     </div>`;
   }).join('');
 }
 
+/** Une balise d'image pointant sur l'installation LOCALE. `encodeURIComponent` pour l'URL,
+ *  `esc()` pour l'attribut : l'ID vient de la base, donc d'un import, donc d'un fichier
+ *  tiers. `loading="lazy"` pour que seule la partie regardée soit chargée. */
+function cardImg(id, cls){
+  return `<img class="${cls}" loading="lazy" alt="${esc(id)}"`
+       + ` src="/api/cards/${encodeURIComponent(id)}/image">`;
+}
+
+// Le deck complet est déjà en mémoire (il vient de /api/decks) : déplier la grille ne
+// redemande rien au serveur, seules les images partent — et seulement au dépliage.
+let _decks = {};
+
+function cardGrid(d){
+  const rest = Object.entries(d.cards).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const puce = (id, qty, lead) => `
+    <div class="ct${lead ? ' lead' : ''}">
+      ${cardImg(id, '')}<div class="ph"></div>
+      <div><span class="q">${lead ? 'leader' : qty + '×'}</span> ${esc(id)}</div>
+    </div>`;
+  return `<div class="cardgrid">${puce(d.leader, 1, true)}`
+       + rest.map(([id, qty]) => puce(id, qty, false)).join('') + '</div>';
+}
+
+function toggleDeckCards(id, btn){
+  const box = btn.closest('.deck').querySelector('.cards');
+  if(box.classList.contains('show')){ box.classList.remove('show'); return; }
+  const d = _decks[id];
+  if(!d) return toast('Deck introuvable — recharge la page.', 1);
+  if(!box.innerHTML) box.innerHTML = cardGrid(d);
+  box.classList.add('show');
+}
+
 $('#decks').addEventListener('click', e => {
-  const btn = e.target.closest('button[data-act="remove-deck"]');
-  if(btn) removeDeck(btn.closest('.deck').dataset.id);
+  const btn = e.target.closest('button[data-act]');
+  if(!btn) return;
+  const id = btn.closest('.deck').dataset.id;
+  ({'remove-deck': () => removeDeck(id),
+    'deck-cards': () => toggleDeckCards(id, btn)})[btn.dataset.act]?.();
 });
+
+// Les évènements `error` d'une image ne remontent pas : on les attrape en phase de CAPTURE
+// sur le conteneur, ce qui couvre aussi les vignettes créées après coup par `innerHTML`.
+$('#decks').addEventListener('error', e => {
+  const img = e.target;
+  if(img.tagName !== 'IMG') return;
+  img.closest('.ct')?.classList.add('no-art');
+  img.hidden = true;      // vignette de leader : la ligne perd son avatar, sans trou
+}, true);
 
 async function syncFromSim(){
   try{

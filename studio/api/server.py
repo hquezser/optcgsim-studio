@@ -18,6 +18,7 @@ Endpoints (préfixe /api) :
     GET  /image?slot=<id> | ?pack=<nom>&rel=<chemin> -> octets d'une image (vignettes de l'UI)
     POST /packs/update {name?}      /  POST /packs/reapply
     GET  /packs/<name>/coverage     -> couverture par deck (le crochet d'adoption)
+    GET  /cards/<id>/image?size=    -> l'image DÉJÀ INSTALLÉE d'une carte (thumb|full)
     GET  /decks                     -> decks en base (avec provenance : source)
     POST /decks/import {text?|url?, name?, tags?}
     POST /decks/<id>/remove         -> tombstone en base + supprime le .txt du sim (si intact)
@@ -81,6 +82,30 @@ def _champ(corps: dict, nom: str):
     return corps[nom]
 
 
+# --------------------------------------------------------------- images de cartes locales
+# On ne SERT que ce que l'installation contient déjà : les vignettes viennent du disque de
+# l'utilisateur, jamais du réseau. C'est ce qui rend la vue honnête (elle montre l'art
+# réellement installé, donc l'effet d'un pack appliqué) et sans exposition juridique — on ne
+# redistribue rien, on affiche ses propres fichiers.
+#
+# Trois variantes coexistent pour une carte (cf. gamepaths.find_card_files) :
+#   StreamingAssets/Cards/<SET>/<ID>.png        plein format 480×671   -> « full »
+#   StreamingAssets/Cards/<SET>/<ID>_small.jpg  miniature deck builder -> « small »
+#   <persistent>/<version>/Cards/<ID>.jpg       cache versionné du sim -> « cache »
+# Le cache versionné sert de repli dans les deux sens : les sets récents n'existent QUE là.
+_IMAGE_PREFS = {
+    "thumb": ("small", "cache", "full"),
+    "full": ("full", "cache", "small"),
+}
+_IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+
+
+def _image_kind(p: Path) -> str:
+    if p.name.endswith("_small.jpg"):
+        return "small"
+    return "full" if p.suffix.lower() == ".png" else "cache"
+
+
 def _pack_kind(rep) -> str:
     cats = [k for k, v in (("cards", rep.cards), ("playmats", rep.playmats),
                            ("cardbacks", rep.cardbacks), ("backgrounds", rep.backgrounds),
@@ -140,6 +165,33 @@ class StudioService:
             return [{"id": d["id"], "name": d["name"], "leader": d["leader"],
                      "cards": d["cards"], "tags": d["tags"], "source": d.get("source")}
                     for d in store.list("decks")]
+
+    def card_image(self, card_id: str, size: str = "thumb") -> Path:
+        """Chemin de l'image installée d'une carte. `KeyError` si le jeu ne l'a pas.
+
+        Deux contrôles, et le second n'est pas redondant. `CARD_ID` est le gabarit du reste
+        de l'écosystème (`decks/importer.py`, validé sur des années de logs) : il ne contient
+        ni `/`, ni `.`, ni `\\`, donc un identifiant accepté ne peut pas remonter l'arbre.
+        Mais cette route sert des FICHIERS d'après un morceau d'URL — la classe de faille la
+        plus classique qui soit — et l'invariant « on ne sort jamais des dossiers d'images »
+        doit tenir même si quelqu'un assouplit un jour le gabarit sans y penser. D'où la
+        vérification de confinement par `is_relative_to`, comme pour les chemins venant d'un
+        manifeste tiers (cf. AGENTS.md).
+        """
+        prefs = _IMAGE_PREFS.get(size)
+        if prefs is None:
+            raise _RequeteInvalide(
+                f"taille inconnue : {size!r} (attendu « thumb » ou « full »)")
+        if not re.fullmatch(importer.CARD_ID, card_id):
+            raise _RequeteInvalide(f"identifiant de carte invalide : {card_id!r}")
+
+        racines = [self.install.cards_dir.resolve()]
+        racines += [(vd / "Cards").resolve() for vd in self.install.version_dirs()]
+        trouves = [p for p in self.install.find_card_files(card_id)
+                   if any(p.resolve().is_relative_to(r) for r in racines)]
+        if not trouves:
+            raise KeyError(card_id)
+        return min(trouves, key=lambda p: prefs.index(_image_kind(p)))
 
     def coverage(self, name: str) -> dict:
         """Pour chaque deck : combien de ses cartes ce pack re-skine. Le crochet d'adoption :
@@ -552,32 +604,33 @@ def make_handler(svc: StudioService):
             except (BrokenPipeError, ConnectionResetError):
                 # Le client est parti avant la fin (onglet fermé, navigation, image sortie du
                 # champ pendant un défilement en chargement paresseux). C'est le cours NORMAL
-                # des choses, surtout avec la grille de vignettes du sélecteur : sans ce
-                # rattrapage, chaque abandon imprimait une trace Python de 40 lignes et
-                # noyait les vraies erreurs du serveur.
+                # des choses, surtout avec la grille de vignettes : sans ce rattrapage,
+                # chaque abandon imprimait une trace Python de 40 lignes et noyait les
+                # vraies erreurs du serveur.
                 pass
 
-        # -------- images (vignettes du sélecteur)
-        _IMG_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
-
-        def _send_image(self, svc, qs):
-            """Sert une image du jeu (`?slot=`) ou de la bibliothèque (`?pack=`&`rel=`).
-
-            Envoi PAR MORCEAUX : la grille de candidats affiche des centaines d'images de
-            plusieurs Mo, jamais chargées entières en mémoire côté serveur. Validation par
-            `ETag` (taille + mtime) : le navigateur ne retélécharge pas une vignette déjà vue,
-            mais voit immédiatement un emplacement dont l'image vient de changer — un cache
-            par durée servirait l'ancienne image juste après un choix.
-            """
+        # -------- images (vignettes : emplacements du sélecteur ET cartes du jeu)
+        def _image_path(self, svc, qs) -> Path:
+            """Résout `?slot=` ou `?pack=`&`rel=` en fichier image à servir."""
             slot_id = (qs.get("slot") or [None])[0]
             if slot_id:
-                path = svc.slot_image(slot_id)
-            else:
-                pack, rel = (qs.get("pack") or [None])[0], (qs.get("rel") or [None])[0]
-                if not pack or not rel:
-                    raise _RequeteInvalide("préciser « slot », ou « pack » et « rel »")
-                path = svc.candidate_image(pack, rel)
-            st = path.stat()
+                return svc.slot_image(slot_id)
+            pack, rel = (qs.get("pack") or [None])[0], (qs.get("rel") or [None])[0]
+            if not pack or not rel:
+                raise _RequeteInvalide("préciser « slot », ou « pack » et « rel »")
+            return svc.candidate_image(pack, rel)
+
+        def _send_image(self, chemin: Path):
+            """Sert un fichier image local — envoyé PAR MORCEAUX, revalidé par empreinte.
+
+            Envoi par morceaux : une grille de vignettes affiche des centaines d'images de
+            plusieurs Mo, jamais chargées entières en mémoire côté serveur. Validation par
+            `ETag` (taille + mtime) : le navigateur ne retélécharge pas une vignette déjà
+            vue, mais voit immédiatement un emplacement dont l'image vient de changer — un
+            cache par durée servirait l'ancienne image juste après un choix ou une
+            application de pack.
+            """
+            st = chemin.stat()
             etag = f'"{st.st_size:x}-{st.st_mtime_ns:x}"'
             if self.headers.get("If-None-Match") == etag:
                 self.send_response(304)
@@ -586,13 +639,14 @@ def make_handler(svc: StudioService):
                 return
             self.send_response(200)
             self.send_header("Content-Type",
-                             self._IMG_TYPES.get(path.suffix.lower(), "application/octet-stream"))
+                             _IMAGE_MIME.get(chemin.suffix.lower(),
+                                            "application/octet-stream"))
             self.send_header("Content-Length", str(st.st_size))
             self.send_header("ETag", etag)
-            self.send_header("Cache-Control", "private, no-cache")
+            self.send_header("Cache-Control", "no-cache")
             try:
                 self.end_headers()
-                with path.open("rb") as f:
+                with chemin.open("rb") as f:
                     while morceau := f.read(_CHUNK):
                         self.wfile.write(morceau)
             except (BrokenPipeError, ConnectionResetError):
@@ -689,13 +743,17 @@ def make_handler(svc: StudioService):
                 if path == "/api/slots":
                     return self._send(200, svc.slots())
                 if path == "/api/image":
-                    return self._send_image(svc, qs)
+                    return self._send_image(self._image_path(svc, qs))
                 m = re.match(r"^/api/slots/([^/]+)/candidates$", path)
                 if m:
                     return self._send(200, svc.slot_candidates(_dec(m.group(1))))
                 m = re.match(r"^/api/packs/([^/]+)/coverage$", path)
                 if m:
                     return self._send(200, svc.coverage(_dec(m.group(1))))
+                m = re.match(r"^/api/cards/([^/]+)/image$", path)
+                if m:
+                    taille = (qs.get("size") or ["thumb"])[0]
+                    return self._send_image(svc.card_image(_dec(m.group(1)), taille))
                 m = re.match(r"^/api/jobs/([^/]+)$", path)
                 if m:
                     return self._send(200, svc.job_status(m.group(1)))
