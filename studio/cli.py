@@ -214,6 +214,68 @@ def cmd_assets_status(args) -> int:
     return 0
 
 
+def _slot_mgr(args) -> tuple:
+    """(install, manager) en respectant `--state-dir` — les tests ne touchent jamais le vrai."""
+    inst = _install(args)
+    etat = Path(args.state_dir) if getattr(args, "state_dir", None) else None
+    return inst, (AssetManager(inst, state_dir=etat) if etat else AssetManager(inst))
+
+
+def cmd_assets_slots(args) -> int:
+    """Liste les emplacements du jeu, ou les candidats de la bibliothèque pour l'un d'eux.
+
+    Le pendant CLI du sélecteur de l'UI : le jeu n'a qu'UNE case par emplacement, un dépôt
+    d'alt-arts en propose des centaines ; sans choix explicite, c'est le nom de fichier qui
+    tranchait tout seul.
+    """
+    from .assets import slots as slotlib
+
+    inst, mgr = _slot_mgr(args)
+    lib = Path(args.lib_dir) if getattr(args, "lib_dir", None) else _PACK_LIB
+    if args.slot:
+        cands = slotlib.candidates(lib, slotlib.find_slot(inst, args.slot).kind)
+        if not cands:
+            print("Aucun candidat dans la bibliothèque pour cet emplacement.")
+            return 0
+        for c in cands:
+            print(f"{c['name']:<40} {lib / c['pack'] / c['rel']}")
+        print(f"\n{len(cands)} candidat(s). "
+              f"`studio assets set-slot {args.slot} <chemin>` en pose un.")
+        return 0
+    for s in slotlib.describe(inst, mgr, lib):
+        marque = ("choisi" if s["choice"] else "modifié" if s["swapped"] else "d'origine")
+        print(f"{s['id']:<22} {marque:<10} {s['candidates']:>4} candidat(s)   {s['rel']}")
+    return 0
+
+
+def cmd_assets_set_slot(args) -> int:
+    from .assets import slots as slotlib
+
+    inst, mgr = _slot_mgr(args)
+    slot = slotlib.find_slot(inst, args.slot)
+    image = Path(args.image)
+    done = slotlib.apply_choice(mgr, slot, image)
+    slotlib.SlotChoices(mgr.state_dir).set(slot.id, image.resolve(), None, None)
+    print(f"« {slot.label} » ← {image.name} ({len(done)} fichier(s) remplacé(s)).")
+    print("Redémarre le sim pour le voir. `studio assets unset-slot "
+          f"{slot.id}` restaure l'original.")
+    return 0
+
+
+def cmd_assets_unset_slot(args) -> int:
+    from .assets import slots as slotlib
+
+    inst, mgr = _slot_mgr(args)
+    slot = slotlib.find_slot(inst, args.slot)
+    try:
+        mgr.restore(inst.streaming_assets / slot.rel)
+        print(f"« {slot.label} » : image d'origine restaurée.")
+    except AssetError:
+        print(f"« {slot.label} » portait déjà son image d'origine.")
+    slotlib.SlotChoices(mgr.state_dir).clear(slot.id)
+    return 0
+
+
 def cmd_assets_restore_all(args) -> int:
     rep = AssetManager(_install(args)).restore_all()
     print(f"{rep['restored']} fichiers restaurés à l'original.")
@@ -742,6 +804,27 @@ def build_parser() -> argparse.ArgumentParser:
     sa.add_parser("status").set_defaults(func=cmd_assets_status)
     sa.add_parser("restore-all").set_defaults(func=cmd_assets_restore_all)
 
+    # Sélecteur d'emplacement : le jeu n'a qu'UNE case par emplacement (un `Cards/Don/Don.png`,
+    # un tapis par couleur) là où un dépôt d'alt-arts propose des centaines d'images. Sans
+    # choix explicite, `apply-mirror` ne pose que celle qui porte déjà le nom attendu.
+    sl = sa.add_parser("slots", help="emplacements du jeu (DON, tapis, dos, fonds) et leur état")
+    sl.add_argument("slot", nargs="?", default=None,
+                    help="si fourni : liste les candidats de la bibliothèque pour cet emplacement")
+    sl.add_argument("--lib-dir", default=None, help="bibliothèque de packs (défaut : celle du studio)")
+    sl.add_argument("--state-dir", default=None)
+    sl.set_defaults(func=cmd_assets_slots)
+
+    ss = sa.add_parser("set-slot", help="poser UNE image précise dans un emplacement")
+    ss.add_argument("slot", help="identifiant d'emplacement (cf. `studio assets slots`)")
+    ss.add_argument("image", help="chemin de l'image à poser")
+    ss.add_argument("--state-dir", default=None)
+    ss.set_defaults(func=cmd_assets_set_slot)
+
+    su = sa.add_parser("unset-slot", help="restaurer l'image d'origine d'un emplacement")
+    su.add_argument("slot")
+    su.add_argument("--state-dir", default=None)
+    su.set_defaults(func=cmd_assets_unset_slot)
+
     pp = sub.add_parser("packs", help="bibliothèque de packs d'assets (normaliser + appliquer)")
     sp = pp.add_subparsers(dest="sub", required=True)
     pad = sp.add_parser("add", help="normaliser une source (dossier/zip/URL) en pack")
@@ -772,7 +855,7 @@ def build_parser() -> argparse.ArgumentParser:
     pap = sp.add_parser("apply", help="appliquer un pack au jeu")
     pap.add_argument("name")
     pap.add_argument("--only", default=None,
-                     help="catégories (cards,playmats,cardbacks,backgrounds,translation)")
+                     help="catégories (cards,don,playmats,cardbacks,backgrounds,translation)")
     pap.add_argument("--dry-run", action="store_true", help="prévisualiser sans écrire")
     pap.set_defaults(func=cmd_packs_apply)
     prm = sp.add_parser("remove", help="restaurer les originaux et retirer le pack")

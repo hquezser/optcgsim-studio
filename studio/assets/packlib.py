@@ -742,9 +742,14 @@ def add_pack(source: str | Path, install: GameInstall, name: str | None = None,
         # --- chemin complet (défaut / sources non explorables) ---
         if src is None:
             src = ingest(source, work, on_progress=on_progress, token=token)
-        # racine « utile » : si un seul sous-dossier enveloppe tout (zip GitHub), descendre
+        # racine « utile » : si un seul sous-dossier enveloppe tout (zip GitHub), descendre —
+        # SAUF si ce dossier est lui-même une racine miroir. Un pack d'alt-arts ne contient
+        # souvent QUE `Cards/` : on descendait alors dedans et on perdait la racine, donc le
+        # chemin miroir. Les cartes s'en tiraient par chance (leur id se relit dans le nom de
+        # fichier), mais `Cards/Don/Don.png` devenait `Don/Don.png` — ni chemin miroir, ni id
+        # de carte : le DON du pack finissait « non classé », jamais copié, jamais applicable.
         entries = [p for p in src.iterdir()] if src.is_dir() else []
-        if len(entries) == 1 and entries[0].is_dir():
+        if len(entries) == 1 and entries[0].is_dir() and entries[0].name not in MIRROR_ROOTS:
             src = entries[0]
         # Assaini dans les DEUX cas : un `name` explicite peut venir d'un `collection.json`
         # distant (`label`), pas seulement du clavier de l'utilisateur.

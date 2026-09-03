@@ -103,6 +103,10 @@ studio assets apply-mirror ~/Theme      # applique après prévisualisation
 studio assets apply-pack ~/MonPack      # layout : cards/, playmats/, cardback.png, translation.txt
 studio assets status                    # active / overwritten (màj sim) / original
 studio assets restore-all
+studio assets slots                     # emplacements du jeu + nombre de candidats
+studio assets slots don                 # ce que ta bibliothèque propose pour le DON
+studio assets set-slot don ~/mon-don.png       # pose CETTE image-là
+studio assets unset-slot don                   # revient à l'image d'origine
 ```
 
 **`apply-mirror`** absorbe les thèmes distribués comme un miroir de `StreamingAssets` (le
@@ -112,6 +116,20 @@ CardBacks, Don, Cards). Règle unique et sûre : un fichier du thème n'est appl
 de fichier inconnu. Couvre d'office les catégories qu'`apply-pack` ne gérait pas
 (`Cards/Don/Don.png`, fonds). Les `.txt` sont renvoyés vers la fusion de traduction.
 `--dry-run` prévisualise (rien écrit) ; `restore-all` annule tout.
+
+**Sélecteur d'emplacements** (`studio assets slots`, onglet *Thèmes* de l'UI). Cette règle a
+un revers : le jeu n'a qu'**une** case par emplacement (un seul `Cards/Don/Don.png`, un tapis
+par couleur) là où un dépôt d'alt-arts en propose des centaines. C'était alors le **nom de
+fichier** qui tranchait tout seul — l'image nommée `Don.png` gagnait, les 142 autres étaient
+écartées en silence (« aucune cible correspondante dans le jeu ») et rien ne permettait de
+dire laquelle on voulait. Le sélecteur liste, pour chaque emplacement, tous les candidats de
+la bibliothèque et applique **celui que tu choisis** — vignettes à l'appui côté UI. Un choix
+est prioritaire sur les packs : ré-appliquer un pack ne l'écrase pas (il est reposé derrière,
+et l'UI le dit). Réversible emplacement par emplacement (`unset-slot`), comme tout le reste.
+
+⚠ Le sim charge le tapis et le DON **une fois au lancement** : il faut le **redémarrer** pour
+les voir changer (les arts de cartes, eux, se chargent à la demande — d'où l'impression que
+« les leaders marchent mais pas le DON »).
 
 ## Pilier 2 — Import universel de decklists (`studio decks …`)
 

@@ -35,6 +35,22 @@ fait pour ingérer des fichiers venant d'inconnus, et les traitait avec trop de 
 
 ### Corrigé
 
+- **Le DON d'un pack d'alt-arts n'était jamais importé.** Pour défaire l'emballage des archives
+  GitHub, l'import descendait dans l'unique sous-dossier d'une source — y compris quand ce
+  dossier était `Cards/`, la racine miroir elle-même. Un pack ne contenant que `Cards/` (le cas
+  courant d'un dépôt d'alt-arts) perdait donc sa racine : les cartes s'en tiraient par chance,
+  leur identifiant se relisant dans le nom de fichier, mais `Cards/Don/Don.png` devenait
+  `Don/Don.png` — ni chemin miroir, ni identifiant de carte, donc « non classé » et jamais
+  copié dans la bibliothèque.
+- **Filtrer sur la catégorie « don » à l'application ne rendait jamais rien.** L'import et
+  l'application classaient les chemins avec deux fonctions différentes, qui avaient divergé :
+  l'une connaissait la catégorie `don`, l'autre rangeait `Cards/Don/…` dans `cards`. Cocher
+  « don » à l'import marchait, `--only don` à l'application non. Une seule fonction classe
+  désormais, aux deux étapes.
+- **Traces d'erreur à chaque client parti en cours de route.** Un onglet fermé ou une image
+  abandonnée pendant un défilement faisait imprimer une trace Python complète par le serveur,
+  noyant les vraies erreurs. Ces abandons sont le cours normal des choses et sont désormais
+  traités comme tels.
 - **Des decklists de tournoi légales étaient refusées à l'import.** La limite de 4 exemplaires
   était appliquée à toutes les cartes, alors que certaines la lèvent dans leur propre texte
   (« you may have any number of this card in your deck » : Pacifista, Biscuit Warrior, Prisoner
@@ -101,6 +117,15 @@ fait pour ingérer des fichiers venant d'inconnus, et les traitait avec trop de 
 
 ### Ajouté
 
+- **Sélecteur d'emplacements** (`studio assets slots` / onglet *Thèmes* de l'interface). Le jeu
+  n'a qu'**une** case par emplacement — un seul `Cards/Don/Don.png`, un tapis par couleur — là
+  où un dépôt d'alt-arts en propose des centaines. Comme un pack ne peut que re-skinner de
+  l'existant, c'était le **nom de fichier** qui tranchait tout seul : sur un dépôt réel, l'image
+  nommée `Don.png` était posée et les **142 autres DON écartés en silence** (« aucune cible
+  correspondante dans le jeu »), sans aucun moyen de dire laquelle on voulait. On choisit
+  désormais, vignette par vignette, quelle image occupe chaque emplacement (DON, tapis, dos de
+  cartes, fonds). Un choix est prioritaire sur les packs : ré-appliquer un pack ne l'écrase pas,
+  il est reposé derrière et l'interface le signale. Réversible emplacement par emplacement.
 - **`studio doctor`** : diagnostic complet de l'installation, à joindre à un rapport de bug.
   Vérifie notamment que chaque sauvegarde d'origine est bien présente — sans quoi un fichier
   du jeu ne pourrait plus être restauré, ce qu'on découvrait jusqu'ici le jour où on en avait
