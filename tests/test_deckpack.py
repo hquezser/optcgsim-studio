@@ -85,6 +85,25 @@ def test_find_manifest_absent_raises(tmp_path):
         deckpack.find_manifest(tmp_path)
 
 
+def test_structured_meta_fields_are_ignored(tmp_path):
+    """Contrat de lecteur tolérant (SPEC v1 additif) : un pack déclarant les champs
+    de méta de tournoi (`format`/`date` au niveau pack, `archetype`/`player`/
+    `placement` par deck) se résout exactement comme sans eux. Le studio ne les
+    consomme pas — ils servent aux lecteurs de données (site, stats) — mais il ne
+    doit jamais échouer sur eux."""
+    manifest = {
+        "name": "OP16 Regional X", "format": "OP16", "date": "2026-07-12",
+        "decks": [
+            {"name": "Purple Enel — Joueuse A (1st)", "archetype": "Purple Enel",
+             "player": "Joueuse A", "placement": 1, "tags": ["meta"], "text": VALID},
+        ],
+    }
+    rep = deckpack.resolve(manifest, tmp_path)
+    assert rep.failed == [] and len(rep.imported) == 1
+    assert rep.imported[0].name == "Purple Enel — Joueuse A (1st)"
+    assert rep.imported[0].deck.total == 50
+
+
 def test_schema_version_future_warns_not_fails(tmp_path):
     manifest = {"name": "P", "schema_version": deckpack.SCHEMA_VERSION + 1,
                 "decks": [{"name": "S", "text": VALID}]}
