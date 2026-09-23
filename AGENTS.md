@@ -7,9 +7,9 @@
 
 | Repo | Rôle | Statut |
 |---|---|---|
-| `optcgsim-deckpacks` | **Le format** : spec `deckpack.json`, schéma, validateur (l'arbitre). | local |
-| `optcgsim-deckpacks-data` | **Les données** : scrapers + un pack par tournoi. | local |
-| `optcgsim-deckpacks-library` | **La vitrine** : générateur de site statique, rampe d'accès vers le simulateur. | local |
+| `optcgsim-deckpacks` | **Le format** : spec `deckpack.json`, schéma, validateur (l'arbitre). | public : github.com/hquezser/optcgsim-deckpacks |
+| `optcgsim-deckpacks-data` | **Les données** : scrapers + un pack par tournoi. | public : github.com/hquezser/optcgsim-deckpacks-data |
+| `optcgsim-deckpacks-library` | **La vitrine** : générateur de site statique, rampe d'accès vers le simulateur. | public : github.com/hquezser/optcgsim-deckpacks-library |
 | **`optcgsim-studio`** ← ici | **Le consommateur** : `studio decks import-pack`, écrit les decks dans le jeu. | publié : github.com/hquezser/optcgsim-studio |
 
 Les liens inter-projets sont des chemins **relatifs entre voisins** : les quatre dépôts
