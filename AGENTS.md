@@ -68,6 +68,10 @@ tourne sur `http.server` de la stdlib, pas de Node/npm/build).
     - `sourcefetch.py` — fetch sélectif GitHub (Tree API + CDN raw.githubusercontent.com)
     - `cardmeta.py` — table id→type de carte (Leader/Character/Event/Stage), vendorisée
   - `decks/` — **pilier 2** : import universel de decklists (`importer.py`, `deckpack.py`)
+  - `protocol.py` — gestionnaire `optcgsim://` (import en un clic depuis la bibliothèque de
+    deckpacks) : parsing strict de l'URL, `install-protocol`/`uninstall-protocol` par OS
+    (applet macOS, `.desktop` Linux, registre HKCU Windows). Tout ce qui arrive par ce
+    canal est hostile : la cible repasse par le chemin `import-pack` complet.
   - `storage/` — **pilier 3** : sync offline-first (`local.py` SQLite, `remote.py`, `sync.py`)
   - `api/` — serveur JSON + UI web (`server.py`, `static/index.html`, `jobs.py` pour les
     opérations longues en tâche de fond)

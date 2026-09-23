@@ -14,6 +14,7 @@ from .assets.manager import AssetError, AssetManager
 from .decks import importer, persist
 from .gamepaths import locate
 from .nettls import CERT_FIX_HINT, is_cert_error
+from .protocol import ProtocolError
 from .storage.local import DEFAULT_DB, LocalStore
 
 _PHASE_LABEL = {"download": "téléchargement", "extract": "extraction",
@@ -793,6 +794,41 @@ def cmd_ui(args) -> int:
                   open_browser=not args.no_open)
 
 
+# --------------------------------------------------------------------------- protocole
+def cmd_import_url(args) -> int:
+    """Point d'entrée du gestionnaire `optcgsim://` — enregistré par install-protocol.
+
+    Une URL `optcgsim://` peut venir de N'IMPORTE QUELLE page web : le parseur est
+    strict, puis la cible passe par le même chemin que `decks import-pack <url>` —
+    validation, écriture et rapport identiques.
+    """
+    from . import protocol
+    action, params = protocol.parse_optcgsim_url(args.url)
+    if action != "import":  # inatteignable : le parseur l'a déjà refusée — garde-fou.
+        raise ProtocolError(f"action « {action} » non prise en charge")
+    args.source = params["url"]
+    return cmd_decks_import_pack(args)
+
+
+def cmd_install_protocol(args) -> int:
+    from . import protocol
+    notes = protocol.install()
+    print("Gestionnaire `optcgsim://` enregistré :")
+    for n in notes:
+        print(f"  ✓ {n}")
+    print("Les liens « importer en un clic » de la bibliothèque de deckpacks ouvriront "
+          "désormais le studio. Défaire : studio uninstall-protocol.")
+    return 0
+
+
+def cmd_uninstall_protocol(args) -> int:
+    from . import protocol
+    notes = protocol.uninstall()
+    for n in notes:
+        print(f"  ✓ {n}")
+    return 0
+
+
 def cmd_sync(args) -> int:
     if not args.url or not args.token:
         print("Mode DÉCONNECTÉ (SQLite local uniquement).\n"
@@ -990,6 +1026,20 @@ def build_parser() -> argparse.ArgumentParser:
                     help="dossier déjà construit par `repos build` (contient .repos-build.json)")
     ru.set_defaults(func=cmd_repos_update)
 
+    iu = sub.add_parser("import-url",
+                        help="handler `optcgsim://` — invoqué par l'OS au clic sur un lien "
+                             "« importer » (enregistré par `studio install-protocol`)")
+    iu.add_argument("url", help="URL optcgsim:// complète (optcgsim://import?url=…)")
+    iu.set_defaults(func=cmd_import_url)
+
+    sub.add_parser("install-protocol",
+                   help="enregistrer le schéma `optcgsim://` auprès de l'OS "
+                        "(applet macOS / .desktop Linux / registre HKCU Windows)"
+                   ).set_defaults(func=cmd_install_protocol)
+    sub.add_parser("uninstall-protocol",
+                   help="retirer l'enregistrement du schéma `optcgsim://`"
+                   ).set_defaults(func=cmd_uninstall_protocol)
+
     pc = sub.add_parser("config", help="configuration locale (token GitHub, collection par défaut…)")
     sc = pc.add_subparsers(dest="sub", required=True)
     sct = sc.add_parser("set-github-token",
@@ -1009,7 +1059,7 @@ def main(argv=None) -> int:
     try:
         args = build_parser().parse_args(argv)
         return args.func(args)
-    except (AssetError, importer.ImportError_, packlib.PackError) as e:
+    except (AssetError, importer.ImportError_, packlib.PackError, ProtocolError) as e:
         print(f"Erreur : {e}", file=sys.stderr)
         return 1
     except urllib.error.URLError as e:

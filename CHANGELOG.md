@@ -5,6 +5,18 @@ Ce projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- **Gestionnaire de protocole `optcgsim://`** (`studio/protocol.py`, commandes
+  `import-url`, `install-protocol`, `uninstall-protocol`). La bibliothèque de
+  deckpacks affiche `optcgsim://import?url=<deckpack>` à côté de la commande
+  copiable : le clic devient littéral. Le parseur est strict (seule l'action
+  `import`, cible http(s) unique et encodée en paramètre) — l'URL vient d'une
+  page web arbitraire — puis la cible emprunte le chemin exact de
+  `decks import-pack`. Enregistrement : applet AppleScript `CFBundleURLTypes` +
+  LaunchServices sur macOS, `.desktop` + `xdg-mime` sur Linux,
+  `HKCU\Software\Classes` sous Windows — aucun droit admin requis nulle part.
+
 Durcissement avant première publication. Les correctifs de sécurité ci-dessous portent sur du
 contenu **tiers** (packs `.zip`, `deckpack.json`, `collection.json` distants) : le studio est
 fait pour ingérer des fichiers venant d'inconnus, et les traitait avec trop de confiance.
